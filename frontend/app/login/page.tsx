@@ -15,12 +15,15 @@ const dotFont = DotGothic16({
 });
 
 export default function LoginPage() {
+    
   const router = useRouter();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const savedEmail = localStorage.getItem("email");
+  const savedPassword = localStorage.getItem("password");
+
   const handleLogin = () => {
-    if (email === "test@test.com" && password === "1234") {
+    if (email === savedEmail && password === savedPassword) {
         localStorage.setItem("isLoggedIn", "true");
         router.push("/home");
     } else {
