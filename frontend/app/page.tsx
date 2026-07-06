@@ -31,7 +31,7 @@ export default function Home() {
       }
       if (event.key === "Enter") {
         if (selected === 0) {
-          router.push("/game");
+          router.push("/home");
         }
         if (selected === 1) {
           router.push("/ranking");
@@ -60,6 +60,7 @@ export default function Home() {
           className="object-cover object-bottom"
           priority
         />
+
         {/* ロゴ */}
         <div className="absolute inset-0 flex flex-col justify-start pt-12 items-center gap-6 ">
           <Image
@@ -71,7 +72,7 @@ export default function Home() {
 
         {/* ボタン */}
           <Button
-            onClick={() => router.push("/game")}
+            onClick={() => router.push("/home")}
             onMouseEnter={() => setSelected(0)}
             className={`${dotFont.className} text-xl px-8 py-4 transition ${
               selected === 0 ? "scale-110 ring-6 ring-yellow-400" : ""

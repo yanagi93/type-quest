@@ -10,7 +10,7 @@ import { Router } from "lucide-react";
 export default function Home() {
     return (
         <div>
-            闘技場画面
+            新規登録
         </div>
     )
 }
