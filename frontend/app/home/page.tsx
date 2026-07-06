@@ -14,8 +14,6 @@ const dotFont = DotGothic16({
   subsets: ["latin"],
 });
 
-const isLoggedIn = false;
-
 const cards = [
   {
     id: "story",
@@ -49,63 +47,60 @@ const cards = [
 export default function Home() {
   // セレクト機能
   const router = useRouter();
-  const [selected, setSelected ] = useState(0);
+
+  const [selected, setSelected] = useState(0);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [open, setOpen] = useState(false);
 
   // キーボード押された時の機能
   useEffect(() => {
+    const checkLogin = () => {
+      setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
+    };
+
+    checkLogin();
+
     if (open) return;
 
-    const handleKeyDown = (event:KeyboardEvent)  => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
 
-      if (open) return;
-
       if (event.key === "ArrowRight") {
-      if (selected === 0) {
-          setSelected(1);
-      }
+        if (selected === 0) setSelected(1);
       }
 
       if (event.key === "ArrowLeft") {
-      if (selected === 1) {
-          setSelected(0);
-      }
-      if (selected === 2) {
-          setSelected(0);
-      }
+        if (selected === 1 || selected === 2) setSelected(0);
       }
 
       if (event.key === "ArrowDown") {
-      if (selected === 1) {
-          setSelected(2);
-      }
+        if (selected === 1) setSelected(2);
       }
 
       if (event.key === "ArrowUp") {
-      if (selected === 2) {
-          setSelected(1);
+        if (selected === 2) setSelected(1);
       }
-      }
-    if (event.key === "Enter") {
-       event.preventDefault();
 
-      const card = cards[selected];
+      if (event.key === "Enter") {
+        event.preventDefault();
 
-      if (card.locked && !isLoggedIn) {
-          setOpen(true)
+        const card = cards[selected];
+
+        if (card.locked && !isLoggedIn) {
+          setOpen(true);
           return;
-      }
+        }
 
-      router.push(card.path);
-    }
-  }
+        router.push(card.path);
+      }
+    };
 
     window.addEventListener("keydown", handleKeyDown);
+
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [ selected, router, open]);
+  }, [selected, router, open, isLoggedIn]);
 
   return (
     <div>
