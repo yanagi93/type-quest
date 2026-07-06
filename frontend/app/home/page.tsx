@@ -162,10 +162,11 @@ export default function Home() {
 
                 <Card
                 onClick={() => {
-                  if (cards[0].locked && !isLoggedIn) {
+                  if (cards[1].locked && !isLoggedIn) {
                     setOpen(true)
                     return;
                   }
+                  router.push("/battle");
                 }}
                 onMouseEnter={() => setSelected(1)}
                 className={`${dotFont.className} relative flex-1 transition ${
