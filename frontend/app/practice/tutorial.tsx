@@ -89,18 +89,20 @@ export function Tutorial({ open, onOpenChange }: TutorialProps) {
             {SLIDES.map((slide, i) => (
               <CarouselItem key={i}>
                 <div className="flex flex-col items-center gap-4 p-4">
-                  <div className="w-full aspect-video bg-gray-800 border-2 border-dashed border-gray-500 flex items-center justify-center text-gray-400 text-sm">
-                    {slide.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+                  {slide.image ? (
+                    <div className="w-full max-h-72 flex items-center justify-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={slide.image}
                         alt={slide.title}
-                        className="w-full h-full object-contain"
+                        className="max-w-full max-h-72 object-contain"
                       />
-                    ) : (
-                      "（ここにスクリーンショットが入ります）"
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="w-full aspect-video bg-gray-800 border-2 border-dashed border-gray-500 flex items-center justify-center text-gray-400 text-sm">
+                      （ここにスクリーンショットが入ります）
+                    </div>
+                  )}
 
                   <h3 className="text-lg font-bold text-center">
                     {slide.title}

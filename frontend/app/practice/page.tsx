@@ -74,15 +74,15 @@ export default function PracticePage() {
 
       <Tutorial open={showTutorial} onOpenChange={setShowTutorial} />
 
+      <Button
+        onClick={() => setShowTutorial(true)}
+        className={`${dotFont.className} absolute top-6 right-10`}
+      >
+        あそびかた
+      </Button>
+
       {/* UIレイヤー */}
       <div className="absolute inset-0 flex flex-col items-center justify-start pt-10 translate-x-20">
-
-        <Button
-          onClick={() => setShowTutorial(true)}
-          className={`${dotFont.className} absolute top-6 right-10`}
-        >
-          あそびかた
-        </Button>
 
         <Card
           className={`
