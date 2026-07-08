@@ -4,7 +4,9 @@ import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/8bit/card";
+import { Button } from "@/components/ui/8bit/button";
 import { DotGothic16 } from "next/font/google";
+import { Tutorial } from "./tutorial";
 
 const dotFont = DotGothic16({
   weight: "400",
@@ -32,10 +34,14 @@ const levels = [
 export default function PracticePage() {
   const router = useRouter();
   const [selected, setSelected] = useState(0);
+  // 試練の塔に入ったら、まずあそびかたを説明する
+  const [showTutorial, setShowTutorial] = useState(true);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
+      // あそびかたを見ている間は、カード選択のキー操作を無効にする
+      if (showTutorial) return;
 
       if (event.key === "ArrowRight") {
         setSelected((prev) => (prev + 1) % levels.length);
@@ -52,7 +58,7 @@ export default function PracticePage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selected, router]);
+  }, [selected, router, showTutorial]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden">
@@ -66,8 +72,17 @@ export default function PracticePage() {
         priority
       />
 
+      <Tutorial open={showTutorial} onOpenChange={setShowTutorial} />
+
       {/* UIレイヤー */}
       <div className="absolute inset-0 flex flex-col items-center justify-start pt-10 translate-x-20">
+
+        <Button
+          onClick={() => setShowTutorial(true)}
+          className={`${dotFont.className} absolute top-6 right-10`}
+        >
+          あそびかた
+        </Button>
 
         <Card
           className={`
