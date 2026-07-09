@@ -84,13 +84,20 @@ export function Tutorial({ open, onOpenChange }: TutorialProps) {
           <DialogTitle>あそびかた</DialogTitle>
         </DialogHeader>
 
-        <Carousel className="w-full px-8">
+        {/*
+          注意: このCarouselのラップ div には overflow-hidden を付けないこと。
+          Prev/Nextボタンはこの外側（-right-14など負のマージン）に配置されているため、
+          ここでoverflow-hiddenにすると2つのボタンごと見えなくなり、押せなくなる。
+          スライドの中身を隠す処理（横にはみ出したスライドを隠す）はCarouselContent内部の
+          div がすでに担っているので、外側のCarouselには不要。
+        */}
+        <Carousel className="w-full px-4">
           <CarouselContent>
             {SLIDES.map((slide, i) => (
               <CarouselItem key={i}>
-                <div className="flex flex-col items-center gap-4 p-4">
+                <div className="flex flex-col items-center gap-4 p-4 min-w-0">
                   {slide.image ? (
-                    <div className="w-full max-h-72 flex items-center justify-center">
+                    <div className="w-full max-h-72 min-w-0 flex items-center justify-center">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={slide.image}

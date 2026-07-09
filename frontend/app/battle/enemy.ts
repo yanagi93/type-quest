@@ -173,3 +173,29 @@ export const enemies = {
     ],
   },
 } as const;
+
+// ストーリーモード第1章専用の敵。試練の塔のenemiesとは別枠で管理する。
+// regular（フィールドの雑魚）は既存のスライム・ゴブリンをそのまま再利用。
+// boss（スライムキング）はスライムの画像を流用したプレースホルダー（専用グラフィックは後で差し替え予定）。
+export const storyEnemies = {
+  chapter1: {
+    regular: [enemies.easy.regular[0], enemies.easy.boss[0]],
+    boss: [
+      {
+        id: 100,
+        name: "スライムキング",
+        hp: 260,
+        images: [
+          "/images/enemy/slime/slime1.png",
+          "/images/enemy/slime/slime2.png",
+          "/images/enemy/slime/slime3.png",
+          "/images/enemy/slime/slime4.png",
+          "/images/enemy/slime/slime5.png",
+        ],
+        score: 300,
+        attackInterval: 2,
+        dropsMagic: null,
+      },
+    ],
+  },
+};

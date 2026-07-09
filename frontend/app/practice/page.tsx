@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/8bit/card";
 import { Button } from "@/components/ui/8bit/button";
 import { DotGothic16 } from "next/font/google";
 import { Tutorial } from "./tutorial";
+import { HomeButton } from "@/components/HomeButton";
 
 const dotFont = DotGothic16({
   weight: "400",
@@ -73,6 +74,8 @@ export default function PracticePage() {
       />
 
       <Tutorial open={showTutorial} onOpenChange={setShowTutorial} />
+
+      <HomeButton className={dotFont.className} />
 
       <Button
         onClick={() => setShowTutorial(true)}

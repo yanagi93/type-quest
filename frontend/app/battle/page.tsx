@@ -1,8 +1,9 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
+import { HomeButton } from "@/components/HomeButton";
 
 import {
   difficulty,
@@ -29,9 +30,25 @@ import {
   ITEM_HP_BONUS,
 } from "./difficulty";
 import { words } from "./words";
-import { enemies } from "./enemy";
+import { enemies, storyEnemies } from "./enemy";
 import { buildWordUnits, type WordUnit } from "./romaji";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/8bit/button";
+import {
+  CHAPTER1_FIELD_WORDS,
+  CHAPTER1_BOSS_WORDS,
+  pickStoryWord,
+} from "../story/storyWords";
+import { writeStoryBattleResult } from "../story/useStoryState";
+
+// ストーリーモードの戦闘（フィールド雑魚・ボス共通）で使う設定。
+// 試練の塔のdifficulty[diffKey]とは別枠で、必要なフィールドだけ持たせてある。
+const STORY_CONFIG = {
+  background: "/images/back-ground/easy.png",
+  wordSpeed: 2,
+  timeLimit: 60,
+  enemyAttackDamage: 8,
+};
 
 // 演出の長さ(ms)
 const ATTACK_LUNGE_MS = 200;
@@ -143,21 +160,58 @@ export default function BattlePage() {
   const searchParams = useSearchParams();
 
   const level = searchParams.get("level") || "easy";
+  const mode = searchParams.get("mode") || "practice";
+  const encounter = searchParams.get("encounter") || "";
+  const learnedWords = searchParams.get("words") || "";
 
-  // levelが変わるたびにkeyも変わるので、Reactはこのコンポーネントを
+  // level/mode/encounterが変わるたびにkeyも変わるので、Reactはこのコンポーネントを
   // 使い回さず作り直す（＝floorやスコアなどのstateが確実にリセットされる）
-  return <BattleGame key={level} level={level} />;
+  return (
+    <BattleGame
+      key={`${mode}-${encounter}-${level}`}
+      level={level}
+      mode={mode}
+      encounter={encounter}
+      learnedWords={learnedWords}
+    />
+  );
 }
 
-function BattleGame({ level }: { level: string }) {
+function BattleGame({
+  level,
+  mode,
+  encounter,
+  learnedWords,
+}: {
+  level: string;
+  mode: string;
+  encounter: string;
+  learnedWords: string;
+}) {
+  // ストーリーモード（試練の塔とは別の、章仕立ての戦闘）かどうか
+  const isStory = mode === "story";
+  const isBossEncounter = encounter === "boss";
+
   const diffKey: Difficulty =
     level === "normal" || level === "hard" ? level : "easy";
 
-  const config = difficulty[diffKey];
+  const config = isStory ? STORY_CONFIG : difficulty[diffKey];
 
-  const enemyList = enemies[diffKey];
+  const enemyList = isStory ? storyEnemies.chapter1 : enemies[diffKey];
 
-  const wordList = words[diffKey];
+  // wordListはuseEffectの依存配列に使われるので、毎レンダー新しい配列を作らないようメモ化する
+  const wordList = useMemo(() => {
+    if (!isStory) return words[diffKey];
+    if (!isBossEncounter) return CHAPTER1_FIELD_WORDS;
+
+    const learnedKana = learnedWords ? learnedWords.split(",") : [];
+    const bossWordsAvailable = CHAPTER1_BOSS_WORDS.filter((w) =>
+      learnedKana.includes(w.kana)
+    );
+
+    return bossWordsAvailable.length > 0 ? bossWordsAvailable : CHAPTER1_BOSS_WORDS;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStory, isBossEncounter, learnedWords, diffKey]);
 
   // 階層と敵グループ
   const [floor, setFloor] = useState(1);
@@ -166,6 +220,8 @@ function BattleGame({ level }: { level: string }) {
   const [floorAnnounce, setFloorAnnounce] = useState<number | null>(null);
   // 宝箱を開いている間、次の階への切り替えをEnterが押されるまで保留しておく
   const [pendingNextFloor, setPendingNextFloor] = useState<number | null>(null);
+  // ストーリーモードの戦闘（フィールド雑魚・ボス）に勝利し、Enterで/storyに戻るのを待っている状態
+  const [storyBattleOver, setStoryBattleOver] = useState(false);
 
   // ターン制の進行管理
   const [phase, setPhase] = useState<Phase>("playerAttack");
@@ -237,9 +293,34 @@ function BattleGame({ level }: { level: string }) {
 
   const isSlowed = slowWordsRemaining > 0;
 
-  const pickWord = () => pickWordForFloor(wordList, floor, diffKey);
+  const pickWord = () =>
+    isStory ? pickStoryWord(wordList) : pickWordForFloor(wordList, floor, diffKey);
 
   const spawnFloorEnemies = (targetFloor: number): ActiveEnemy[] => {
+    // ストーリーモードのボス戦は、章専用のボス1体だけを等身大のHPで出す
+    // （試練の塔のBOSS_HP_MULTIPLIER等は適用しない）
+    if (isStory && isBossEncounter) {
+      const template = enemyList.boss[0];
+      const image =
+        template.images[Math.floor(Math.random() * template.images.length)];
+
+      return [
+        {
+          uid: enemyUidRef.current++,
+          name: template.name,
+          image,
+          maxHp: template.hp,
+          hp: template.hp,
+          score: template.score,
+          attackDamage: config.enemyAttackDamage,
+          attackInterval: template.attackInterval,
+          turnsUntilAttack: template.attackInterval,
+          dropsMagic: template.dropsMagic,
+          isBoss: true,
+        },
+      ];
+    }
+
     // 5階ごとはボス階。ボス専用の種族からランダムで1体だけ、強化されて出てくる
     if (isBossFloor(targetFloor)) {
       const bossPool = enemyList.boss;
@@ -363,7 +444,7 @@ function BattleGame({ level }: { level: string }) {
   useEffect(() => {
     setActiveEnemies(spawnFloorEnemies(1));
 
-    const word = pickWordForFloor(wordList, 1, diffKey);
+    const word = pickWord();
 
     setCurrentKana(word.kana);
     setCurrentKanji(word.kanji);
@@ -380,8 +461,8 @@ function BattleGame({ level }: { level: string }) {
     return () => window.clearTimeout(timer);
   }, [floor]);
 
-  // 宝箱を開いている間は、単語も時間も完全に止める
-  const isPaused = treasureMessage !== null;
+  // 宝箱を開いている間・ストーリー戦闘の勝利演出中は、単語も時間も完全に止める
+  const isPaused = treasureMessage !== null || storyBattleOver;
 
   useEffect(() => {
     if (isGameOver || isPaused) return;
@@ -504,8 +585,12 @@ function BattleGame({ level }: { level: string }) {
     setActiveEnemies(tickedSurvivors);
 
     if (tickedSurvivors.length === 0) {
-      setPendingNextFloor(floor + 1);
-      grantTreasure();
+      if (isStory) {
+        setStoryBattleOver(true);
+      } else {
+        setPendingNextFloor(floor + 1);
+        grantTreasure();
+      }
     }
 
     startNextRound(tickedSurvivors);
@@ -576,8 +661,12 @@ function BattleGame({ level }: { level: string }) {
       }
 
       if (tickedRest.length === 0) {
-        setPendingNextFloor(floor + 1);
-        grantTreasure();
+        if (isStory) {
+          setStoryBattleOver(true);
+        } else {
+          setPendingNextFloor(floor + 1);
+          grantTreasure();
+        }
 
         window.setTimeout(() => setDefeatingUid(null), DEFEAT_FADE_MS);
       } else {
@@ -694,10 +783,23 @@ function BattleGame({ level }: { level: string }) {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isGameOver) return;
 
-    // 宝箱を開いている間はEnterでの再開だけを受け付ける
+    // 宝箱を開いている間・ストーリー戦闘の勝利演出中はEnterでの再開だけを受け付ける
     if (isPaused) {
       if (e.key === "Enter") {
         e.preventDefault();
+
+        if (storyBattleOver) {
+          writeStoryBattleResult({
+            outcome: "win",
+            encounter: isBossEncounter ? "boss" : "field",
+          });
+          // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
+          // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
+          // あえてハードナビゲーションで確実に作り直す
+          window.location.href = "/story";
+          return;
+        }
+
         setTreasureMessage(null);
 
         if (pendingNextFloor !== null) {
@@ -759,7 +861,13 @@ function BattleGame({ level }: { level: string }) {
           return;
         }
 
-        // まだ他の候補にも続く可能性があるので、確定はせず入力だけ進める
+        // まだ他の候補にも続く可能性があるので、確定はせず入力だけ進める。
+        // 「ん」のロールオーバー（次のユニットへ繰り越し）を経てここに来ることがあるため、
+        // unitProgressだけでなくresolvedRomaji・unitIndexもローカル変数の内容で必ず同期させる
+        // （これを怠ると、繰り越し後の状態がstateに反映されずに次のキー入力が
+        // 　古いユニットと照合されてしまい、正しく打っているのにミス扱いされ続けるバグになる）
+        setResolvedRomaji(resolved);
+        setUnitIndex(idx);
         setUnitProgress(nextProgress);
         return;
       }
@@ -806,6 +914,8 @@ function BattleGame({ level }: { level: string }) {
         priority
         className="object-cover"
       />
+
+      <HomeButton />
 
       {/* 暗くする */}
       <div className="absolute inset-0 bg-black/30" />
@@ -947,6 +1057,18 @@ function BattleGame({ level }: { level: string }) {
           </div>
         )}
 
+        {/* ストーリー戦闘の勝利演出（Enterが押されるまで/storyへは戻らない） */}
+        {storyBattleOver && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
+            <div className="bg-gray-900 border-4 border-yellow-400 rounded-xl px-10 py-6 text-center animate-battle-pop">
+              <p className="text-yellow-300 text-3xl font-bold mb-2">
+                {isBossEncounter ? "🎉 ボスをたおした！" : "勝利！"}
+              </p>
+              <p className="text-white/70 text-sm">Enterキーで戻る</p>
+            </div>
+          </div>
+        )}
+
         {/* ゲームオーバー */}
         {isGameOver && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80">
@@ -955,6 +1077,24 @@ function BattleGame({ level }: { level: string }) {
               <p className="text-white text-xl mb-1">到達階層：{floor}F</p>
               <p className="text-white text-xl mb-1">スコア：{score}</p>
               <p className="text-white text-xl">最大コンボ：{maxCombo}</p>
+
+              {isStory && (
+                <Button
+                  className="mt-6"
+                  onClick={() => {
+                    writeStoryBattleResult({
+                      outcome: "lose",
+                      encounter: isBossEncounter ? "boss" : "field",
+                    });
+                    // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
+          // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
+          // あえてハードナビゲーションで確実に作り直す
+          window.location.href = "/story";
+                  }}
+                >
+                  村に戻る
+                </Button>
+              )}
             </div>
           </div>
         )}
