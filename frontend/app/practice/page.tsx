@@ -76,7 +76,7 @@ export default function PracticePage() {
 
       <Button
         onClick={() => setShowTutorial(true)}
-        className={`${dotFont.className} absolute top-6 right-10`}
+        className={`${dotFont.className} absolute top-6 right-10 z-10`}
       >
         あそびかた
       </Button>
