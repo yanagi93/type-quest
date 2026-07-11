@@ -34,17 +34,19 @@ import { enemies, storyEnemies } from "./enemy";
 import { buildWordUnits, type WordUnit } from "./romaji";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/8bit/button";
-import {
-  CHAPTER1_FIELD_WORDS,
-  CHAPTER1_BOSS_WORDS,
-  pickStoryWord,
-} from "../story/storyWords";
+import { CHAPTER1_FIELD_WORDS } from "../story/storyWords";
+import { CHAPTER1_WORD_DICTIONARY } from "../story/chapter1Data";
 import { writeStoryBattleResult } from "../story/useStoryState";
+
+// 敵を倒したときに、まだ覚えていない言葉を低確率で見つけられる（アイテムと同じ
+// ノリの言葉ドロップ）。「ゆうき」はボス撃破の専用報酬なのでドロップ対象からは除く
+const WORD_DROP_CHANCE = 0.25;
 
 // ストーリーモードの戦闘（フィールド雑魚・ボス共通）で使う設定。
 // 試練の塔のdifficulty[diffKey]とは別枠で、必要なフィールドだけ持たせてある。
+// 第1章のフィールドは「はじまりの草原」なので、戦闘背景も草原にしてある
 const STORY_CONFIG = {
-  background: "/images/back-ground/easy.png",
+  background: "/images/back-ground/story-field-battle.png",
   wordSpeed: 2,
   timeLimit: 60,
   enemyAttackDamage: 8,
@@ -163,6 +165,14 @@ export default function BattlePage() {
   const mode = searchParams.get("mode") || "practice";
   const encounter = searchParams.get("encounter") || "";
   const learnedWords = searchParams.get("words") || "";
+  // ストーリーモードで町の宝箱から手に入れた「攻撃力の書」「防御力の書」の数。
+  // ボス戦にだけ、開始時点の強化として引き継がれる
+  const attackBooks = Number(searchParams.get("attackBooks") || "0");
+  const defenseBooks = Number(searchParams.get("defenseBooks") || "0");
+  // ストーリーモードは、村での探索中に減ったHPをそのまま持ち越す
+  // （試練の塔は毎回100/100からの独立した挑戦なので、指定が無ければ100/100になる）
+  const initialHp = Number(searchParams.get("hp") || "100");
+  const initialMaxHp = Number(searchParams.get("maxHp") || "100");
 
   // level/mode/encounterが変わるたびにkeyも変わるので、Reactはこのコンポーネントを
   // 使い回さず作り直す（＝floorやスコアなどのstateが確実にリセットされる）
@@ -173,6 +183,10 @@ export default function BattlePage() {
       mode={mode}
       encounter={encounter}
       learnedWords={learnedWords}
+      attackBooks={attackBooks}
+      defenseBooks={defenseBooks}
+      initialHp={initialHp}
+      initialMaxHp={initialMaxHp}
     />
   );
 }
@@ -182,11 +196,19 @@ function BattleGame({
   mode,
   encounter,
   learnedWords,
+  attackBooks,
+  defenseBooks,
+  initialHp,
+  initialMaxHp,
 }: {
   level: string;
   mode: string;
   encounter: string;
   learnedWords: string;
+  attackBooks: number;
+  defenseBooks: number;
+  initialHp: number;
+  initialMaxHp: number;
 }) {
   // ストーリーモード（試練の塔とは別の、章仕立ての戦闘）かどうか
   const isStory = mode === "story";
@@ -199,19 +221,27 @@ function BattleGame({
 
   const enemyList = isStory ? storyEnemies.chapter1 : enemies[diffKey];
 
-  // wordListはuseEffectの依存配列に使われるので、毎レンダー新しい配列を作らないようメモ化する
+  // wordListはuseEffectの依存配列に使われるので、毎レンダー新しい配列を作らないようメモ化する。
+  // これは「自分の攻撃フェーズ」で出す単語のプール。フィールド戦・ボス戦とも、
+  // 実際に村で見つけた（覚えた）言葉だけを出す。まだ何も覚えていない状態で
+  // フィールドに出てしまった場合だけの保険として、その場合はCHAPTER1_FIELD_WORDS
+  // （未習得でも出せる基本語彙）にフォールバックする
   const wordList = useMemo(() => {
     if (!isStory) return words[diffKey];
-    if (!isBossEncounter) return CHAPTER1_FIELD_WORDS;
 
     const learnedKana = learnedWords ? learnedWords.split(",") : [];
-    const bossWordsAvailable = CHAPTER1_BOSS_WORDS.filter((w) =>
+    const learnedWordsAvailable = CHAPTER1_WORD_DICTIONARY.filter((w) =>
       learnedKana.includes(w.kana)
     );
 
-    return bossWordsAvailable.length > 0 ? bossWordsAvailable : CHAPTER1_BOSS_WORDS;
+    return learnedWordsAvailable.length > 0 ? learnedWordsAvailable : CHAPTER1_FIELD_WORDS;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStory, isBossEncounter, learnedWords, diffKey]);
+
+  // 敵の攻撃（防御フェーズ）で出す単語のプール。自分の攻撃フェーズとは別枠にして、
+  // 敵は必ずしも自分が覚えた言葉ではない「見知らぬ言葉」をぶつけてくる、という
+  // 演出にしている（試練の塔は元々1つのプールを共有するのでこの区別は無い）
+  const enemyWordList = isStory ? CHAPTER1_FIELD_WORDS : wordList;
 
   // 階層と敵グループ
   const [floor, setFloor] = useState(1);
@@ -230,12 +260,20 @@ function BattleGame({
   const [defenseIndex, setDefenseIndex] = useState(0);
   const [turnMissCount, setTurnMissCount] = useState(0);
 
-  const [maxPlayerHp, setMaxPlayerHp] = useState(100);
-  const [playerHp, setPlayerHp] = useState(100);
+  // ストーリーモードはinitialHp/initialMaxHpで村から持ち越したHPを引き継ぐ。
+  // 試練の塔はisStoryがfalseなので常に100/100から始まる
+  const [maxPlayerHp, setMaxPlayerHp] = useState(isStory ? initialMaxHp : 100);
+  const [playerHp, setPlayerHp] = useState(isStory ? initialHp : 100);
 
-  // 宝箱で強化される、攻撃力・被ダメージの倍率
-  const [attackMultiplier, setAttackMultiplier] = useState(1);
-  const [defenseMultiplier, setDefenseMultiplier] = useState(1);
+  // 宝箱で強化される、攻撃力・被ダメージの倍率。
+  // ストーリーモードのボス戦は、町の宝箱で集めたattackBooks/defenseBooksの数だけ
+  // 最初から強化された状態で始まる（試練の塔の宝箱と同じ量ずつ効果がある）
+  const [attackMultiplier, setAttackMultiplier] = useState(
+    1 + attackBooks * ITEM_ATTACK_BONUS
+  );
+  const [defenseMultiplier, setDefenseMultiplier] = useState(
+    Math.max(1 - defenseBooks * ITEM_DEFENSE_BONUS, ITEM_DEFENSE_MULTIPLIER_MIN)
+  );
   // 宝箱でアイテムを手に入れたときに一瞬表示するメッセージ
   const [treasureMessage, setTreasureMessage] = useState<TreasureMessage | null>(null);
 
@@ -270,6 +308,8 @@ function BattleGame({
   const [slowWordsRemaining, setSlowWordsRemaining] = useState(0);
   // 魔法をドロップしたときに一瞬表示するメッセージ
   const [getMessage, setGetMessage] = useState<GetMessage | null>(null);
+  // 敵を倒して言葉を見つけたときに一瞬表示するメッセージ（ストーリーモードのみ）
+  const [wordGetMessage, setWordGetMessage] = useState<string | null>(null);
 
   // ミス時に一瞬だけ次の文字を赤く光らせる
   const [missFlash, setMissFlash] = useState(false);
@@ -290,11 +330,30 @@ function BattleGame({
   const inputRef = useRef<HTMLInputElement>(null);
   const damageIdRef = useRef(0);
   const enemyUidRef = useRef(0);
+  // この戦闘中に言葉ドロップで見つけた言葉（kana）。writeStoryBattleResultで
+  // 村側に持ち帰るために、勝敗が決まるまでここに貯めておく
+  const battleLearnedWordsRef = useRef<string[]>([]);
+  // ストーリーモードで「だんだん単語が強くなる」演出のためだけに使うターン数。
+  // 試練の塔の階層(floor)の代わりに、単語を出した回数を疑似的な階層として使う
+  // （ストーリーモードには階層の概念が無いため）
+  const storyTurnCountRef = useRef(0);
 
   const isSlowed = slowWordsRemaining > 0;
 
-  const pickWord = () =>
-    isStory ? pickStoryWord(wordList) : pickWordForFloor(wordList, floor, diffKey);
+  // phaseに応じて、自分の攻撃用（wordList）か敵の攻撃用（enemyWordList）かを
+  // 切り替えて単語を選ぶ。ストーリーモードは、戦闘が進むほど（単語を出すほど）
+  // 長く・強い単語が出やすくなるよう、pickWordForFloorの「階層」に疑似的な
+  // カウントを渡している
+  const pickWordForPhase = (phase: Phase) => {
+    if (!isStory) return pickWordForFloor(wordList, floor, diffKey);
+
+    storyTurnCountRef.current += 1;
+
+    const pseudoFloor = 1 + Math.floor(storyTurnCountRef.current / 4);
+    const pool = phase === "enemyAttack" ? enemyWordList : wordList;
+
+    return pickWordForFloor(pool, pseudoFloor, diffKey);
+  };
 
   const spawnFloorEnemies = (targetFloor: number): ActiveEnemy[] => {
     // ストーリーモードのボス戦は、章専用のボス1体だけを等身大のHPで出す
@@ -401,6 +460,29 @@ function BattleGame({
     window.setTimeout(() => setGetMessage(null), GET_MESSAGE_MS);
   };
 
+  // 敵を倒したときに低確率で、まだ覚えていない言葉を1つ見つける
+  // （ストーリーモードのみ。試練の塔には言霊の概念が無いので何もしない）
+  const tryDropWord = () => {
+    if (!isStory) return;
+    if (Math.random() >= WORD_DROP_CHANCE) return;
+
+    const alreadyKnown = new Set([
+      ...(learnedWords ? learnedWords.split(",") : []),
+      ...battleLearnedWordsRef.current,
+    ]);
+    const candidates = CHAPTER1_WORD_DICTIONARY.filter(
+      (w) => w.kana !== "ゆうき" && !alreadyKnown.has(w.kana)
+    );
+
+    if (candidates.length === 0) return;
+
+    const word = candidates[Math.floor(Math.random() * candidates.length)];
+
+    battleLearnedWordsRef.current.push(word.kana);
+    setWordGetMessage(`新しい言霊『${word.kanji}（${word.kana}）』を見つけた！`);
+    window.setTimeout(() => setWordGetMessage(null), GET_MESSAGE_MS);
+  };
+
   // 階層が上がるたびに、宝箱から強化アイテムを1つもらう。
   // Enterが押されるまでゲーム全体を止めておく（wordX・残り時間のカウントダウンを一時停止）
   const grantTreasure = () => {
@@ -419,9 +501,15 @@ function BattleGame({
         text = "受けるダメージが減った！";
         break;
       case "hp":
-        setMaxPlayerHp((prev) => prev + ITEM_HP_BONUS);
-        setPlayerHp((prev) => prev + ITEM_HP_BONUS);
-        text = "さいだいHPが上がった！";
+        // さいだいHPを上げるだけでなく、そのままHPを新しいさいだい値まで全回復する
+        setMaxPlayerHp((prev) => {
+          const nextMax = prev + ITEM_HP_BONUS;
+
+          setPlayerHp(nextMax);
+
+          return nextMax;
+        });
+        text = "さいだいHPが上がって、全回復した！";
         break;
       case "fireMagic":
         setMagicCounts((prev) => ({ ...prev, fire: prev.fire + 1 }));
@@ -440,11 +528,11 @@ function BattleGame({
     setTreasureMessage({ type, text });
   };
 
-  // ゲーム開始時に1階の敵と最初の単語を用意する
+  // ゲーム開始時に1階の敵と最初の単語を用意する（最初は必ず自分の攻撃から）
   useEffect(() => {
     setActiveEnemies(spawnFloorEnemies(1));
 
-    const word = pickWord();
+    const word = pickWordForPhase("playerAttack");
 
     setCurrentKana(word.kana);
     setCurrentKanji(word.kanji);
@@ -505,9 +593,10 @@ function BattleGame({
 
   // 次の単語を選ぶ。魔法を使うかどうかは自動抽選ではなく、
   // プレイヤーが1/2/3キーで自分の好きなタイミングに選ぶ（activateMagic参照）ので、
-  // 新しい単語はいつも魔法なしから始まる
-  const pickNextWord = () => {
-    const word = pickWord();
+  // 新しい単語はいつも魔法なしから始まる。phaseによって自分の攻撃用/敵の攻撃用の
+  // どちらのプールから選ぶかが変わる（pickWordForPhase参照）
+  const pickNextWord = (phase: Phase) => {
+    const word = pickWordForPhase(phase);
 
     setActiveMagicType(null);
     setCurrentKana(word.kana);
@@ -526,7 +615,7 @@ function BattleGame({
 
     if (survivors.length === 0) {
       // フロアクリア。次の階の敵はフルのカウントダウンで待っているので、このターンは防御なし
-      pickNextWord();
+      pickNextWord("playerAttack");
       setPhase("playerAttack");
       return;
     }
@@ -534,7 +623,7 @@ function BattleGame({
     const attackers = survivors.filter((e) => e.turnsUntilAttack <= 0);
     const nextPhase: Phase = attackers.length > 0 ? "enemyAttack" : "playerAttack";
 
-    pickNextWord();
+    pickNextWord(nextPhase);
     setPhase(nextPhase);
 
     if (attackers.length > 0) {
@@ -579,6 +668,8 @@ function BattleGame({
       const d = drop as { name: string; type: MagicType };
       showMagicDrop(d.name, d.type);
     }
+
+    if (defeatedCount > 0) tryDropWord();
 
     const tickedSurvivors = tickDown(survivors);
 
@@ -660,6 +751,8 @@ function BattleGame({
         showMagicDrop(front.name, front.dropsMagic);
       }
 
+      tryDropWord();
+
       if (tickedRest.length === 0) {
         if (isStory) {
           setStoryBattleOver(true);
@@ -724,8 +817,9 @@ function BattleGame({
     setWordX(1000);
 
     const nextIndex = defenseIndex + 1;
+    const nextPhase: Phase = nextIndex >= defenseQueue.length ? "playerAttack" : "enemyAttack";
 
-    pickNextWord();
+    pickNextWord(nextPhase);
 
     if (nextIndex >= defenseQueue.length) {
       setPhase("playerAttack");
@@ -789,9 +883,13 @@ function BattleGame({
         e.preventDefault();
 
         if (storyBattleOver) {
+          // 勝った場合は、戦闘終了時点の実際のHPをそのまま次へ持ち越す
           writeStoryBattleResult({
             outcome: "win",
             encounter: isBossEncounter ? "boss" : "field",
+            hp: playerHp,
+            maxHp: maxPlayerHp,
+            learnedWords: battleLearnedWordsRef.current,
           });
           // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
           // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
@@ -1040,6 +1138,16 @@ function BattleGame({
           </div>
         )}
 
+        {/* 言葉ドロップ演出（ストーリーモードのみ） */}
+        {wordGetMessage && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
+            <div className="bg-gray-900 border-4 border-cyan-300 rounded-xl px-10 py-6 text-center animate-battle-pop">
+              <p className="text-cyan-300 text-3xl font-bold mb-2">📖 言霊ゲット！</p>
+              <p className="text-white text-lg">{wordGetMessage}</p>
+            </div>
+          </div>
+        )}
+
         {/* 宝箱ゲット演出（Enterが押されるまでゲームは止まったまま） */}
         {treasureMessage && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
@@ -1082,9 +1190,14 @@ function BattleGame({
                 <Button
                   className="mt-6"
                   onClick={() => {
+                    // 負けた場合は全回復してから村へ戻す（0のまま持ち越すと、次の
+                    // 戦闘に入った瞬間にまたゲームオーバーになってしまうため）
                     writeStoryBattleResult({
                       outcome: "lose",
                       encounter: isBossEncounter ? "boss" : "field",
+                      hp: maxPlayerHp,
+                      maxHp: maxPlayerHp,
+                      learnedWords: battleLearnedWordsRef.current,
                     });
                     // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
           // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
@@ -1107,7 +1220,7 @@ function BattleGame({
           <div className="relative">
 
             <Image
-              src="/images/player/player.png"
+              src="/images/kaiwa/syuzinkousyoumen.png"
               alt="player"
               width={240}
               height={240}

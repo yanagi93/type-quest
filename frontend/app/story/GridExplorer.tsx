@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
-import type { GridMap, Interactable } from "./types";
+import type { FloorTileType, GridMap, Interactable, PlacedObject } from "./types";
 
 // キーを押しっぱなしにしたときの1マス移動の間隔。
 // OS標準のキーリピート（最初だけ長い遅延が入り、後から連打になる）に頼ると
@@ -14,31 +13,65 @@ type DirectionKey = (typeof DIRECTION_KEYS)[number];
 
 type Pos = { x: number; y: number };
 
+const DEFAULT_VIEWPORT_WIDTH = 800;
+const DEFAULT_VIEWPORT_HEIGHT = 560;
+
+// 床の種類ごとの画像パス。どのマップでも共通で使う（chapter1に限らない汎用アセット）
+const FLOOR_TILE_IMAGES: Record<FloorTileType, string> = {
+  grass: "/images/map/yuka/kusa.png",
+  dirt: "/images/map/yuka/tuti.png",
+  water: "/images/map/yuka/mizu.png",
+};
+
+// 主人公の向きごとの画像。矢印キーを押した方向に合わせて差し替える
+type FacingDirection = "up" | "down" | "left" | "right";
+const PLAYER_IMAGES: Record<FacingDirection, string> = {
+  down: "/images/map/syuzinkou/syoumen.png",
+  up: "/images/map/syuzinkou/usiro.png",
+  left: "/images/map/syuzinkou/hidari.png",
+  right: "/images/map/syuzinkou/migi.png",
+};
+const DIRECTION_KEY_TO_FACING: Record<DirectionKey, FacingDirection> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+};
+
 type GridExplorerProps = {
   map: GridMap;
   interactables: Interactable[];
+  // 会話や当たり判定を持たない、見た目だけの置物（木・花・柵など）
+  objects?: PlacedObject[];
   playerPos: Pos;
   onMove: (pos: Pos) => void;
   onBump: (interactable: Interactable) => void;
   onStepOntoFloor?: (pos: Pos) => void;
   isLocked?: boolean;
   tileSize?: number;
-  // 用意できている場合は、マス目の色分けの代わりにこの画像をマップ全体の背景として敷く
-  backgroundImageSrc?: string;
+  // 用意できている場合は、色分けの代わりにマスごとに床画像（草・土・水）を敷く
+  floorTextures?: FloorTileType[][];
+  // 画面に一度に表示する範囲（px）。マップ全体がこれより大きい場合は
+  // 主人公を中心にカメラが追従し、マップの端まで行くとそこで止まる
+  viewportWidth?: number;
+  viewportHeight?: number;
 };
 
 // 町・フィールド共通で使う、グリッド移動の探索コンポーネント。
-// backgroundImageSrcが無い場合は、タイル絵の代わりに色付きdiv/絵文字で表現するプレースホルダー。
+// floorTexturesが無い場合は、タイル絵の代わりに色付きdivで表現するプレースホルダー。
 export function GridExplorer({
   map,
   interactables,
+  objects = [],
   playerPos,
   onMove,
   onBump,
   onStepOntoFloor,
   isLocked = false,
   tileSize = DEFAULT_TILE_SIZE,
-  backgroundImageSrc,
+  floorTextures,
+  viewportWidth = DEFAULT_VIEWPORT_WIDTH,
+  viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
 }: GridExplorerProps) {
   // 押されている方向キー（押した順）。一番最後に押したキーの方向へ進む
   const heldKeysRef = useRef<DirectionKey[]>([]);
@@ -48,6 +81,10 @@ export function GridExplorer({
   // マップの座標を自分で編集したいときは、これをONにして
   // 「壁（赤）」「床（枠線のみ）」がどのマスに対応しているかを画像と重ねて確認できる
   const [showDebugGrid, setShowDebugGrid] = useState(false);
+
+  // 主人公の向き（最後に押した矢印キーの方向）。壁にぶつかって動けない場合でも
+  // 向きだけは変わるようにする（体当たりしたときにちゃんとそっちを向く）
+  const [facing, setFacing] = useState<FacingDirection>("down");
 
   useEffect(() => {
     const handleToggleGrid = (event: KeyboardEvent) => {
@@ -81,6 +118,8 @@ export function GridExplorer({
       else if (key === "ArrowLeft") dx = -1;
       else if (key === "ArrowRight") dx = 1;
 
+      setFacing(DIRECTION_KEY_TO_FACING[key]);
+
       const pos = playerPosRef.current;
       const target = { x: pos.x + dx, y: pos.y + dy };
 
@@ -95,8 +134,11 @@ export function GridExplorer({
 
       if (map.tiles[target.y][target.x] === "wall") return;
 
+      // ぶつかり判定はinteractionX/Y（未指定ならx, y）を基準にする。
+      // 家のように画像の見た目の中心とドアの位置がズレているものは、
+      // interactionX/Yだけドアの実際の位置に合わせてあることがある
       const blocking = interactables.find(
-        (i) => i.x === target.x && i.y === target.y
+        (i) => (i.interactionX ?? i.x) === target.x && (i.interactionY ?? i.y) === target.y
       );
 
       if (blocking) {
@@ -158,51 +200,174 @@ export function GridExplorer({
 
   const width = map.tiles[0].length;
   const height = map.tiles.length;
+  const mapPixelWidth = width * tileSize;
+  const mapPixelHeight = height * tileSize;
+
+  // カメラ（画面に表示する範囲）を主人公中心に追従させつつ、
+  // マップの端より外は映らないようにクランプ（範囲を制限）する。
+  // 主人公のマス中心が画面のちょうど真ん中に来るように計算し、
+  // それがマップの外にはみ出す場合だけ、マップの端で止める。
+  const playerCenterX = playerPos.x * tileSize + tileSize / 2;
+  const playerCenterY = playerPos.y * tileSize + tileSize / 2;
+  const maxCameraX = Math.max(0, mapPixelWidth - viewportWidth);
+  const maxCameraY = Math.max(0, mapPixelHeight - viewportHeight);
+  const cameraX = Math.min(
+    Math.max(playerCenterX - viewportWidth / 2, 0),
+    maxCameraX
+  );
+  const cameraY = Math.min(
+    Math.max(playerCenterY - viewportHeight / 2, 0),
+    maxCameraY
+  );
+
+  // 置物（家・井戸などのインタラクタブル＋見た目だけの木や花）と主人公をまとめて、
+  // 「足元のマス（下端）」が上にあるものから順に描画する（＝Yソート）。
+  // これにより、主人公が家の下側にいれば家より手前に、家の奥（上側）にいれば
+  // 家より奥に表示され、上から見た遠近関係が自然に見えるようになる。
+  type Sprite = {
+    key: string;
+    image: string;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    sortY: number;
+  };
+
+  const sprites: Sprite[] = [];
+  // groundLevel: trueの置物（花など、背の低いもの）。Yソートせず、常に主人公の背景として
+  // 床のすぐ上に敷く（主人公が上側にいても下側にいても、花の上を歩いているように見える）
+  const groundSprites: Sprite[] = [];
+
+  for (const interactable of interactables) {
+    if (!interactable.image || !interactable.widthTiles || !interactable.heightTiles) continue;
+
+    const w = interactable.widthTiles * tileSize;
+    const h = interactable.heightTiles * tileSize;
+
+    sprites.push({
+      key: `interactable-${interactable.id}`,
+      image: interactable.image,
+      left: (interactable.x + 0.5) * tileSize - w / 2,
+      top: (interactable.y + 1) * tileSize - h,
+      width: w,
+      height: h,
+      sortY: interactable.y,
+    });
+  }
+
+  for (const object of objects) {
+    const w = object.widthTiles * tileSize;
+    const h = object.heightTiles * tileSize;
+
+    const sprite: Sprite = {
+      key: `object-${object.id}`,
+      image: object.image,
+      left: (object.x + 0.5) * tileSize - w / 2,
+      top: (object.y + 1) * tileSize - h,
+      width: w,
+      height: h,
+      sortY: object.y,
+    };
+
+    if (object.groundLevel) {
+      groundSprites.push(sprite);
+    } else {
+      sprites.push(sprite);
+    }
+  }
+
+  sprites.sort((a, b) => a.sortY - b.sortY);
 
   return (
     <div
-      className="relative bg-green-950"
-      style={{ width: width * tileSize, height: height * tileSize }}
+      className="relative overflow-hidden bg-black mx-auto"
+      style={{ width: viewportWidth, height: viewportHeight }}
     >
-      {backgroundImageSrc ? (
-        <Image
-          src={backgroundImageSrc}
-          alt=""
-          fill
-          className="object-cover pointer-events-none select-none"
-          priority
-        />
-      ) : (
-        map.tiles.map((row, y) =>
-          row.map((tile, x) => (
-            <div
-              key={`${x}-${y}`}
-              className={
-                tile === "wall"
-                  ? "absolute bg-gray-800 border border-gray-900"
-                  : "absolute bg-green-700 border border-green-800/50"
-              }
-              style={{
-                left: x * tileSize,
-                top: y * tileSize,
-                width: tileSize,
-                height: tileSize,
-              }}
-            />
-          ))
-        )
-      )}
+      <div
+        className="absolute bg-green-950 ease-linear"
+        style={{
+          width: mapPixelWidth,
+          height: mapPixelHeight,
+          left: -cameraX,
+          top: -cameraY,
+          transitionProperty: "left, top",
+          transitionDuration: `${STEP_INTERVAL_MS}ms`,
+        }}
+      >
+      {/* 床レイヤー。floorTexturesがあればマスごとに草/土/水の画像を敷き詰め、無ければ色分けプレースホルダー */}
+      {floorTextures
+        ? floorTextures.map((row, y) =>
+            row.map((floorType, x) => (
+              <div
+                key={`floor-${x}-${y}`}
+                className="absolute"
+                style={{
+                  left: x * tileSize,
+                  top: y * tileSize,
+                  width: tileSize,
+                  height: tileSize,
+                  backgroundImage: `url(${FLOOR_TILE_IMAGES[floorType]})`,
+                  backgroundSize: "100% 100%",
+                  imageRendering: "pixelated",
+                }}
+              />
+            ))
+          )
+        : map.tiles.map((row, y) =>
+            row.map((tile, x) => (
+              <div
+                key={`${x}-${y}`}
+                className={
+                  tile === "wall"
+                    ? "absolute bg-gray-800 border border-gray-900"
+                    : "absolute bg-green-700 border border-green-800/50"
+                }
+                style={{
+                  left: x * tileSize,
+                  top: y * tileSize,
+                  width: tileSize,
+                  height: tileSize,
+                }}
+              />
+            ))
+          )}
 
+      {/* 地面に貼りつく置物（花など。groundLevel: true）。Yソートせず、常に主人公より奥に敷く */}
+      {groundSprites.map((sprite) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={sprite.key}
+          src={sprite.image}
+          alt=""
+          className="absolute pointer-events-none select-none"
+          style={{
+            left: sprite.left,
+            top: sprite.top,
+            width: sprite.width,
+            height: sprite.height,
+            imageRendering: "pixelated",
+          }}
+        />
+      ))}
+
+      {/* 絵文字プレースホルダーのインタラクタブル（imageを持たないもの。出口・ボス・
+          専用スプライトが無い歩き回るNPCなど）。歩き回るNPCは位置が変わるので、
+          主人公と同じtransitionでなめらかに移動して見えるようにしている
+          （動かないものには単に効果がないだけ）。imageを持つものは下のYソート
+          スプライトの方で描画するので、二重に表示しないようここでは除外する */}
       {interactables.map((interactable) =>
-        interactable.label ? (
+        interactable.label && !interactable.image ? (
           <div
             key={interactable.id}
-            className="absolute flex items-center justify-center text-2xl"
+            className="absolute flex items-center justify-center text-2xl ease-linear"
             style={{
               left: interactable.x * tileSize,
               top: interactable.y * tileSize,
               width: tileSize,
               height: tileSize,
+              transitionProperty: "left, top",
+              transitionDuration: `${STEP_INTERVAL_MS}ms`,
             }}
           >
             {interactable.label}
@@ -210,19 +375,55 @@ export function GridExplorer({
         ) : null
       )}
 
-      <div
-        className="absolute flex items-center justify-center text-2xl ease-linear"
-        style={{
-          left: playerPos.x * tileSize,
-          top: playerPos.y * tileSize,
-          width: tileSize,
-          height: tileSize,
-          transitionProperty: "left, top",
-          transitionDuration: `${STEP_INTERVAL_MS}ms`,
-        }}
-      >
-        🧑
-      </div>
+      {/* 置物（image付きインタラクタブル＋見た目だけの木や花など）と主人公を、
+          足元マスが上にあるものから順に描画（Yソート）。主人公は自分のyの位置に割り込ませる */}
+      {(() => {
+        const beforePlayer = sprites.filter((s) => s.sortY <= playerPos.y);
+        const afterPlayer = sprites.filter((s) => s.sortY > playerPos.y);
+
+        const renderSprite = (sprite: Sprite) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={sprite.key}
+            src={sprite.image}
+            alt=""
+            className="absolute pointer-events-none select-none ease-linear"
+            style={{
+              left: sprite.left,
+              top: sprite.top,
+              width: sprite.width,
+              height: sprite.height,
+              imageRendering: "pixelated",
+              // 歩き回るNPC（画像付き）が主人公と同じ速さでなめらかに移動して見えるように。
+              // 動かない置物（家・木など）には単に効果がないだけ
+              transitionProperty: "left, top",
+              transitionDuration: `${STEP_INTERVAL_MS}ms`,
+            }}
+          />
+        );
+
+        return (
+          <>
+            {beforePlayer.map(renderSprite)}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={PLAYER_IMAGES[facing]}
+              alt=""
+              className="absolute pointer-events-none select-none ease-linear"
+              style={{
+                left: playerPos.x * tileSize,
+                top: playerPos.y * tileSize,
+                width: tileSize,
+                height: tileSize,
+                imageRendering: "pixelated",
+                transitionProperty: "left, top",
+                transitionDuration: `${STEP_INTERVAL_MS}ms`,
+              }}
+            />
+            {afterPlayer.map(renderSprite)}
+          </>
+        );
+      })()}
 
       {/*
         当たり判定デバッグ表示（gキーでON/OFF）。
@@ -262,8 +463,53 @@ export function GridExplorer({
               </div>
             ))
           )}
+
+          {/*
+            置物（木・家・花など）の見た目の範囲を水色の枠で、
+            足元マス（x, y。実際に指定する座標）を水色の点で表示する。
+            画像が実際どのマスにまたがって表示されるかを見ながら
+            TOWN_OBJECTS / TOWN_INTERACTABLESの座標を調整できるようにするため。
+          */}
+          {sprites.map((sprite) => (
+            <div key={`debug-sprite-${sprite.key}`}>
+              <div
+                className="absolute border-2 border-cyan-300/80"
+                style={{
+                  left: sprite.left,
+                  top: sprite.top,
+                  width: sprite.width,
+                  height: sprite.height,
+                }}
+              />
+              <div
+                className="absolute bg-cyan-300 rounded-full"
+                style={{
+                  left: sprite.left + sprite.width / 2,
+                  top: sprite.top + sprite.height,
+                  width: 8,
+                  height: 8,
+                  transform: "translate(-50%, -50%)",
+                }}
+              />
+            </div>
+          ))}
+
+          {/* groundLevel: true の置物（花など）はピンク枠で区別表示（常に主人公の背景） */}
+          {groundSprites.map((sprite) => (
+            <div
+              key={`debug-ground-${sprite.key}`}
+              className="absolute border-2 border-pink-400/80"
+              style={{
+                left: sprite.left,
+                top: sprite.top,
+                width: sprite.width,
+                height: sprite.height,
+              }}
+            />
+          ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -79,7 +79,23 @@ type TutorialProps = {
 export function Tutorial({ open, onOpenChange }: TutorialProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/*
+        max-h + overflow-y-auto: スライドの中身（特に画像＋長い箇条書き）が
+        ダイアログの高さより長くなることがあり、それだとダイアログの外に
+        はみ出してしまう。ダイアログ自体を画面の85%までの高さに制限し、
+        それを超えた分は中でスクロールできるようにして、はみ出しを防ぐ。
+        （横方向のPrev/Nextボタンのクリック対策で外側のCarouselには
+        overflow-hiddenを付けられないので、縦方向はこちらで制御する）
+      */}
+      {/*
+        max-w-2xl だけでは効かない: ベースのDialogContent（components/ui/dialog.tsx）が
+        `sm:max-w-sm` を持っており、Tailwindの生成CSSではレスポンシブ指定（sm:）が
+        無指定のクラスより後ろに置かれるため、640px以上の画面では sm:max-w-sm が
+        max-w-2xl より後勝ちしてダイアログが384pxまで縮んでしまう（実際に横あふれの
+        原因になっていた）。同じ sm: バリアントで上書きすることで tailwind-merge が
+        正しく後勝ちさせてくれる。
+      */}
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>あそびかた</DialogTitle>
         </DialogHeader>

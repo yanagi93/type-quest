@@ -92,8 +92,15 @@ export function getCritChance(combo: number): number {
 // 単語の「攻撃力」。文字数が多い（＝打つのが大変な）単語ほど威力が高い。
 // 階層が上がるほど長い単語が出やすくなる（pickWordForFloor）ので、
 // 自然と階層とともに出てくる単語の攻撃力も上がっていく。
+//
+// 以前は「10 + 文字数*6」という固定ボーナス付きの式だった。この固定ボーナスが
+// 短い単語ほど威力全体に占める割合が大きくなり、結果的に「短い単語を連打した
+// ほうが（打つ時間あたりの威力＝実質的な強さが）短い単語をたくさん覚えている
+// だけで強くなってしまう」というバランス崩壊を招いていた。
+// 固定ボーナスをやめて文字数の2乗に比例する形にすることで、短い単語は
+// 相対的に弱く、長い単語ほど（文字数の伸び以上に）強くなるようにしている。
 export function getWordPower(word: string): number {
-  return 10 + word.length * 6;
+  return word.length * (word.length + 5);
 }
 
 // 魔法（発動タイミングは1/2/3キーでプレイヤーが選ぶ）
@@ -197,3 +204,7 @@ export const ITEM_ATTACK_BONUS = 0.1;
 export const ITEM_DEFENSE_BONUS = 0.1;
 export const ITEM_DEFENSE_MULTIPLIER_MIN = 0.3;
 export const ITEM_HP_BONUS = 20;
+
+// ストーリーモードのポーション（村人からもらえる、体力の書より手軽な回復アイテム）。
+// 体力の書と違い、さいだいHPは増やさずその場でHPを回復するだけ
+export const POTION_HEAL_AMOUNT = 30;
