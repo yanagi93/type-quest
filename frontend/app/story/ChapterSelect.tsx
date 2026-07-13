@@ -8,15 +8,17 @@ import { HomeButton } from "@/components/HomeButton";
 
 const dotFont = DotGothic16({ weight: "400", subsets: ["latin"] });
 
+// 8章構成の世界観。frontend/DESIGN.md 7節に全体設計がある
+// （各章「町→フィールド→ダンジョン→ボス」の流れ＋新能力で行動範囲が広がる設計）
 const CHAPTER_TITLES = [
-  "はじまりの草原",
-  "迷いの森",
-  "氷雪の王国",
-  "灼熱火山",
-  "天空神殿",
-  "絶望の海",
+  "はじまりの村",
+  "砂漠の町",
+  "魔法の森",
+  "謎の洞窟",
+  "荒れ果てた町",
+  "毒の沼地",
   "沈黙の塔",
-  "魔王城",
+  "魔王大陸",
 ];
 
 type ChapterSelectProps = {

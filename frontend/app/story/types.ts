@@ -7,15 +7,17 @@ export type GridMap = {
   start: { x: number; y: number };
 };
 
-// 床の見た目（草・土の道・水面）。当たり判定（TileType）とは別で、
+// 床の見た目（草・土の道・水面など）。当たり判定（TileType）とは別で、
 // 「歩けるかどうか」に関係なく、全マスに何かしらの床画像を敷くために使う。
-export type FloorTileType = "grass" | "dirt" | "water";
+// sand/stoneはフィールド（世界地図）を新しいタイル素材で作り直すときに追加した
+// （chapter1Data.ts FIELD_FLOOR_ROWS参照。村側はgrass/dirt/waterのみ使用）
+export type FloorTileType = "grass" | "dirt" | "water" | "sand" | "stone";
 
 export type Interactable = {
   id: string;
   x: number;
   y: number;
-  kind: "npc" | "object" | "exit" | "boss";
+  kind: "npc" | "object" | "boss" | "exit";
   // プレースホルダー表示用の絵文字・短いラベル（専用スプライトが無い場合用）
   label: string;
   // 置物の見た目（家・井戸・洞窟など）。指定するとx,yマスの上に画像が表示される
@@ -41,6 +43,7 @@ export type Interactable = {
   // （攻撃力・防御力の書はボス戦開始時にまとめて自動で効果が乗る）
   grantsItem?: "attack" | "defense" | "hp" | "potion";
   dialogue?: string[];
+  // kind: "exit" 用。ぶつかると別のマップ（シーン）へ切り替える
   exitsTo?: "field" | "town";
 };
 

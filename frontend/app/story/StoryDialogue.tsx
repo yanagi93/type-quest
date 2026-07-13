@@ -142,7 +142,7 @@ export function StoryDialogue({ open, lines, onComplete, title, portraits, backg
       {rightPortrait && renderPortrait(rightPortrait)}
 
       <div className="fixed bottom-0 left-0 right-0 p-4 md:p-6">
-        <Card className="max-w-4xl mx-auto bg-slate-950/95 text-white">
+        <Card className="max-w-4xl mx-auto bg-slate-950/80 text-white">
           <div className="p-5">
             {nameLabel && (
               <p className="text-sm md:text-base font-bold text-yellow-300 mb-2">{nameLabel}</p>

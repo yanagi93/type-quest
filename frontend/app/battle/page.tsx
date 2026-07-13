@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/8bit/button";
 import { CHAPTER1_FIELD_WORDS } from "../story/storyWords";
 import { CHAPTER1_WORD_DICTIONARY } from "../story/chapter1Data";
 import { writeStoryBattleResult } from "../story/useStoryState";
+import { api } from "@/lib/api";
 
 // 敵を倒したときに、まだ覚えていない言葉を低確率で見つけられる（アイテムと同じ
 // ノリの言葉ドロップ）。「ゆうき」はボス撃破の専用報酬なのでドロップ対象からは除く
@@ -44,7 +45,7 @@ const WORD_DROP_CHANCE = 0.25;
 
 // ストーリーモードの戦闘（フィールド雑魚・ボス共通）で使う設定。
 // 試練の塔のdifficulty[diffKey]とは別枠で、必要なフィールドだけ持たせてある。
-// 第1章のフィールドは「はじまりの草原」なので、戦闘背景も草原にしてある
+// 第1章「はじまりの村」のフィールドは草原なので、戦闘背景も草原にしてある
 const STORY_CONFIG = {
   background: "/images/back-ground/story-field-battle.png",
   wordSpeed: 2,
@@ -68,6 +69,9 @@ const MAX_CRIT_CHANCE = 0.5;
 
 // 敵を1体倒すごとに増える残り時間(秒)
 const TIME_BONUS_PER_KILL = 5;
+// 単語を1つ打ち切るごとに増える残り時間(秒)。時間切れ（打ち切れなかった）ときは
+// 加算しない（自分の攻撃・防御どちらのフェーズでも共通）
+const TIME_BONUS_PER_WORD = 1;
 
 type Phase = "playerAttack" | "enemyAttack";
 
@@ -252,6 +256,10 @@ function BattleGame({
   const [pendingNextFloor, setPendingNextFloor] = useState<number | null>(null);
   // ストーリーモードの戦闘（フィールド雑魚・ボス）に勝利し、Enterで/storyに戻るのを待っている状態
   const [storyBattleOver, setStoryBattleOver] = useState(false);
+  // 勝利演出でこの戦闘中に見つけた言葉を一覧表示するためのスナップショット。
+  // refの中身を描画中に直接読むとReactのlintルールに引っかかる（refはレンダーの
+  // 外で読む前提のため）ので、勝利が決まった瞬間にstateへコピーしておく
+  const [battleLearnedWordsSnapshot, setBattleLearnedWordsSnapshot] = useState<string[]>([]);
 
   // ターン制の進行管理
   const [phase, setPhase] = useState<Phase>("playerAttack");
@@ -583,6 +591,19 @@ function BattleGame({
     }
   }, [timeLeft, playerHp, isGameOver]);
 
+  // ゲームオーバーになった瞬間に1回だけ、ログイン中ならスコアを記録する
+  // （backend/DESIGN.md 5節。未ログインなら送らない＝ランキングはログインしないと載らない）。
+  // ストーリーモードの個々の雑魚戦勝利では送らない（毎回小さいスコアが大量に積み上がって
+  // しまうため。「1回の挑戦の記録」として意味を持つゲームオーバー時のみにしている）
+  const scoreSubmittedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isGameOver || scoreSubmittedRef.current) return;
+
+    scoreSubmittedRef.current = true;
+    api.postScore(isStory ? "story" : "practice", isStory ? null : level, score, floor).catch(() => {});
+  }, [isGameOver, isStory, level, score, floor]);
+
   // これまでの最大コンボを記録しておく（ゲームオーバー画面用）
   useEffect(() => {
     setMaxCombo((prev) => Math.max(prev, combo));
@@ -677,6 +698,7 @@ function BattleGame({
 
     if (tickedSurvivors.length === 0) {
       if (isStory) {
+        setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
         setStoryBattleOver(true);
       } else {
         setPendingNextFloor(floor + 1);
@@ -703,12 +725,14 @@ function BattleGame({
       getWordPower(currentKana) * multiplier * attackMultiplier
     );
 
-    const damage =
-      usedMagic && magicType === "fire"
-        ? Math.round(baseDamage * FIRE_DAMAGE_MULTIPLIER)
-        : isCrit
-        ? Math.round(baseDamage * CRIT_DAMAGE_MULTIPLIER)
-        : baseDamage;
+    // 時間切れ（打ち切れなかった）ときはダメージを与えない
+    const damage = isTimeout
+      ? 0
+      : usedMagic && magicType === "fire"
+      ? Math.round(baseDamage * FIRE_DAMAGE_MULTIPLIER)
+      : isCrit
+      ? Math.round(baseDamage * CRIT_DAMAGE_MULTIPLIER)
+      : baseDamage;
 
     setPlayerAttacking(true);
     window.setTimeout(() => setPlayerAttacking(false), ATTACK_LUNGE_MS);
@@ -733,7 +757,10 @@ function BattleGame({
       return;
     }
 
-    showDamage(damage, "enemy", isCrit, usedMagic ? magicType : null);
+    // ダメージ0（時間切れ）のときは「-0」のような表示を出さない
+    if (damage > 0) {
+      showDamage(damage, "enemy", isCrit, usedMagic ? magicType : null);
+    }
 
     const nextHp = front.hp - damage;
     const rest = activeEnemies.slice(1);
@@ -755,6 +782,7 @@ function BattleGame({
 
       if (tickedRest.length === 0) {
         if (isStory) {
+          setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
           setStoryBattleOver(true);
         } else {
           setPendingNextFloor(floor + 1);
@@ -833,6 +861,11 @@ function BattleGame({
   // 単語を1つ「打ち終える」たびに呼ばれる（正しく打ち切った場合と、時間切れの場合の両方）
   const advanceWord = (missOverride?: number, isTimeout = false) => {
     const missCount = missOverride ?? turnMissCount;
+
+    // 打ち切れた（時間切れではない）ときだけ残り時間にボーナスを加算する
+    if (!isTimeout) {
+      setTimeLeft((prev) => prev + TIME_BONUS_PER_WORD);
+    }
 
     if (phase === "enemyAttack") {
       resolveDefenseWord(missCount);
@@ -1029,13 +1062,20 @@ function BattleGame({
         {/* 上部UI */}
         <div className="flex justify-between p-8">
 
-          <div>
+          {/*
+            mt-10: 左上のホームボタン（fixed top-6 left-10、高さ32px・y:24〜56）と
+            この階層表示が重なって「試練の塔 ○F」が読めなくなっていたため、
+            ホームボタンの下まで避けるよう余白を入れている。階層表示自体も
+            text-sm opacity-80だと薄くて見落としやすかったので、背景チップ付きの
+            大きめの表示に変えた
+          */}
+          <div className="mt-16">
 
-            <p className="text-white text-sm opacity-80">
+            <p className="text-white text-lg font-bold bg-black/40 inline-block px-3 py-1 rounded">
               試練の塔 {floor}F
             </p>
 
-            <p className="text-white text-xl">
+            <p className="text-white text-xl mt-2">
               Player HP ({playerHp}/{maxPlayerHp})
             </p>
 
@@ -1148,7 +1188,12 @@ function BattleGame({
           </div>
         )}
 
-        {/* 宝箱ゲット演出（Enterが押されるまでゲームは止まったまま） */}
+        {/*
+          宝箱ゲット演出（Enterが押されるまでゲームは止まったまま）。
+          この演出はbg-black/60で画面全体を暗くするため、左上の小さい階層表示
+          （「試練の塔 ○F」）が見えにくくなってしまう。宝箱を開けている間もこれから
+          何階に進むのかがひと目でわかるよう、ポップアップ自体に階層番号を出す
+        */}
         {treasureMessage && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
             <div className="bg-gray-900 border-4 border-yellow-400 rounded-xl px-10 py-6 text-center animate-battle-pop">
@@ -1160,18 +1205,43 @@ function BattleGame({
                 {ITEM_META[treasureMessage.type].label}
               </p>
               <p className="text-white text-lg mb-3">{treasureMessage.text}</p>
-              <p className="text-white/70 text-sm">Enterキーで次の階へ</p>
+              <p className="text-white/70 text-sm">
+                Enterキーで {pendingNextFloor ?? floor + 1}F へ
+              </p>
             </div>
           </div>
         )}
 
-        {/* ストーリー戦闘の勝利演出（Enterが押されるまで/storyへは戻らない） */}
+        {/*
+          ストーリー戦闘の勝利演出（Enterが押されるまで/storyへは戻らない）。
+          以前は戦闘中に言葉を見つけたときの演出（wordGetMessage）が数秒で自動的に
+          消えてしまい、倒した直後に勝利演出（同じ位置に重なって表示される）に
+          即座に隠されてしまうことがあった。この戦闘で見つけた言葉は勝利が決まった
+          瞬間にbattleLearnedWordsSnapshotへコピーしてあるので、それをここで一覧
+          表示することで「勝利」と「ゲットしたもの」を同じログにまとめている
+          （refの中身を描画中に直接読むとReactのlintルールに引っかかるため、
+          stateにコピーしたものを描画に使う）
+        */}
         {storyBattleOver && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
             <div className="bg-gray-900 border-4 border-yellow-400 rounded-xl px-10 py-6 text-center animate-battle-pop">
               <p className="text-yellow-300 text-3xl font-bold mb-2">
                 {isBossEncounter ? "🎉 ボスをたおした！" : "勝利！"}
               </p>
+              {battleLearnedWordsSnapshot.length > 0 && (
+                <div className="text-cyan-300 text-lg mb-3">
+                  <p className="mb-1">📖 見つけた言葉</p>
+                  {battleLearnedWordsSnapshot.map((kana) => {
+                    const word = CHAPTER1_WORD_DICTIONARY.find((w) => w.kana === kana);
+
+                    return (
+                      <p key={kana} className="text-white text-base">
+                        {word ? `『${word.kanji}（${word.kana}）』` : `『${kana}』`}
+                      </p>
+                    );
+                  })}
+                </div>
+              )}
               <p className="text-white/70 text-sm">Enterキーで戻る</p>
             </div>
           </div>
@@ -1179,7 +1249,11 @@ function BattleGame({
 
         {/* ゲームオーバー */}
         {isGameOver && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80">
+          // 修正済みのバグ：以前はbg-black/80（8割透明）だったため、裏で止まっている
+          // 単語表示（流れるローマ字・漢字）がうっすら透けて見えてしまっていた
+          // （「たまに変な文字が見える」の原因）。ゲームオーバーは操作を止める画面なので
+          // 完全に不透明にして、裏の表示が見えないようにした
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
             <div className="bg-gray-900 border-4 border-red-500 rounded-xl px-12 py-8 text-center">
               <p className="text-red-500 text-4xl font-bold mb-4">GAME OVER</p>
               <p className="text-white text-xl mb-1">到達階層：{floor}F</p>
@@ -1217,14 +1291,21 @@ function BattleGame({
 
           {/* プレイヤー */}
 
-          <div className="relative">
+          {/*
+            修正済みのバグ：素材画像（syuzinkousyoumen.png）は348×773pxの縦長の
+            立ち絵だが、以前はwidth={240} height={240}で正方形の箱に強制していたため、
+            縦横比が合わずはみ出した部分（足元）が切れて表示されていた。
+            StoryDialogue.tsxの立ち絵と同じく、fill + object-containで箱に収める
+            方式に直し、縦横比を保ったまま全身が収まるようにした
+          */}
+          <div className="relative w-36 h-72">
 
             <Image
               src="/images/kaiwa/syuzinkousyoumen.png"
               alt="player"
-              width={240}
-              height={240}
+              fill
               className={cn(
+                "object-contain",
                 playerAttacking && "animate-battle-lunge",
                 playerHit && "animate-battle-shake brightness-150"
               )}
@@ -1328,6 +1409,15 @@ function BattleGame({
 
                   </p>
 
+                  {/*
+                    バーだけだとHPがほぼ0になったとき（撃破演出中など）に
+                    細すぎて見えづらい・読み取れないことがあるので、
+                    プレイヤーHP表示と同じように数字でも常に表示しておく
+                  */}
+                  <p className="text-white/80 text-sm mt-1">
+                    HP {Math.max(enemy.hp, 0)}/{enemy.maxHp}
+                  </p>
+
                   <div
                     className={cn(
                       "h-4 bg-gray-700 rounded mt-1 overflow-hidden",
@@ -1343,7 +1433,7 @@ function BattleGame({
                           : "bg-red-500"
                       )}
                       style={{
-                        width: `${(enemy.hp / enemy.maxHp) * 100}%`,
+                        width: `${Math.max((enemy.hp / enemy.maxHp) * 100, 0)}%`,
                       }}
                     />
 

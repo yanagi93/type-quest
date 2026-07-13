@@ -8,6 +8,7 @@ import { DotGothic16 } from "next/font/google";
 import { Card } from "@/components/ui/8bit/card";
 import { Button } from "@/components/ui/8bit/button";
 import { Input } from "@/components/ui/input";
+import { api, ApiError } from "@/lib/api";
 
 const dotFont = DotGothic16({
   weight: "400",
@@ -21,24 +22,35 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // alert()はブラウザのネイティブモーダルで操作がブロックされてしまう（自動テストが
+  // 固まる原因にもなった）ので、フォーム内にメッセージを表示する方式にしてある
+  const [message, setMessage] = useState<string | null>(null);
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!userName || !email || !password || !confirmPassword) {
-      alert("すべて入力してください");
+      setMessage("すべて入力してください");
       return;
     }
 
     if (password !== confirmPassword) {
-      alert("パスワードが一致しません");
+      setMessage("パスワードが一致しません");
       return;
     }
 
-    localStorage.setItem("userName", userName);
-    localStorage.setItem("email", email);
-    localStorage.setItem("password", password);
+    setMessage(null);
+    setIsSubmitting(true);
 
-    alert("登録が完了しました！");
-    router.push("/login");
+    try {
+      // backend/（Express、backend/DESIGN.md参照）に本物のアカウントを作成する。
+      // 登録に成功するとcookie（httpOnly JWT）が発行され、その場でログイン状態になる
+      await api.register(userName, email, password);
+      router.push("/home");
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "登録に失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -97,8 +109,10 @@ export default function RegisterPage() {
             />
           </div>
 
-          <Button className="w-full" onClick={handleRegister}>
-            新規登録
+          {message && <p className="text-sm text-red-600 text-center">{message}</p>}
+
+          <Button className="w-full" onClick={handleRegister} disabled={isSubmitting}>
+            {isSubmitting ? "登録中…" : "新規登録"}
           </Button>
 
           <Button

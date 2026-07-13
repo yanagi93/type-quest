@@ -6,8 +6,9 @@ import { Button  } from "@/components/ui/8bit/button"
 import { Card  } from "@/components/ui/8bit/card"
 import { useRouter } from "next/navigation";
 import { DotGothic16 } from "next/font/google";
-import { Heading5, Router } from "lucide-react";
+import { Settings } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/8bit/dialog";
+import { api } from "@/lib/api";
 
 const dotFont = DotGothic16({
   weight: "400",
@@ -52,14 +53,17 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [open, setOpen] = useState(false);
 
+  // ログイン状態はbackend/（Express）のcookie（httpOnly JWT）で判定する。
+  // localStorageの"isLoggedIn"フラグはもう使わない（backend/DESIGN.md 5節参照）
+  useEffect(() => {
+    api
+      .me()
+      .then(() => setIsLoggedIn(true))
+      .catch(() => setIsLoggedIn(false));
+  }, []);
+
   // キーボード押された時の機能
   useEffect(() => {
-    const checkLogin = () => {
-      setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
-    };
-
-    checkLogin();
-
     if (open) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -114,8 +118,19 @@ export default function Home() {
           className="object-cover object-bottom"
           priority
         />
+        {/* 設定画面へ（自分のアカウント情報表示・ログアウト）。誰でも押せるが、
+            中身（/setting側）は未ログインならログイン画面へ誘導する
+            （frontend/DESIGN.md 2節でもともと予定していた導線） */}
+        <button
+          onClick={() => router.push("/setting")}
+          className="absolute top-6 right-6 z-10 w-12 h-12 rounded-full bg-black/60 border-2 border-white/40 flex items-center justify-center text-white hover:bg-black/80 transition"
+          aria-label="設定"
+        >
+          <Settings />
+        </button>
+
         <div className="absolute inset-0 flex flex-col justify-start pt-12 items-center gap-10 ">
-          
+
           <Card className="text-xl px-8 py-4 transition">
             ゲームモード選択
           </Card>

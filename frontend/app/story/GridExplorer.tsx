@@ -16,11 +16,14 @@ type Pos = { x: number; y: number };
 const DEFAULT_VIEWPORT_WIDTH = 800;
 const DEFAULT_VIEWPORT_HEIGHT = 560;
 
-// 床の種類ごとの画像パス。どのマップでも共通で使う（chapter1に限らない汎用アセット）
+// 床の種類ごとの画像パス。どのマップでも共通で使う（chapter1に限らない汎用アセット）。
+// sand/stoneは切り出したタイル素材（public/images/map/okimono/tileset/）を使う
 const FLOOR_TILE_IMAGES: Record<FloorTileType, string> = {
   grass: "/images/map/yuka/kusa.png",
   dirt: "/images/map/yuka/tuti.png",
   water: "/images/map/yuka/mizu.png",
+  sand: "/images/map/okimono/tileset/floor_sand_beige.png",
+  stone: "/images/map/okimono/tileset/floor_stone_gray.png",
 };
 
 // 主人公の向きごとの画像。矢印キーを押した方向に合わせて差し替える
@@ -220,6 +223,26 @@ export function GridExplorer({
     maxCameraY
   );
 
+  // 画面に映る範囲＋余白ぶんのマスだけを描画対象にする（ビューポートカリング）。
+  // 以前は町全体（48×44＝2000マス超）を毎回まるごと描画していたため、1歩動くたびに
+  // 画面外の大量のタイル・木・花・徘徊NPCまで含めて再計算されて動きがカクついていた。
+  // 余白（BUFFER_TILES）は、家（6マス）や洞窟（7マス）のように足元の座標から
+  // 見た目が大きくはみ出す置物が、画面の縁でいきなり消えたり出現したりしないための
+  // マージン兼、カメラが滑らかに動いている間の縁の見切れ対策
+  const BUFFER_TILES = 8;
+  const startCol = Math.max(0, Math.floor(cameraX / tileSize) - BUFFER_TILES);
+  const endCol = Math.min(width, Math.ceil((cameraX + viewportWidth) / tileSize) + BUFFER_TILES);
+  const startRow = Math.max(0, Math.floor(cameraY / tileSize) - BUFFER_TILES);
+  const endRow = Math.min(height, Math.ceil((cameraY + viewportHeight) / tileSize) + BUFFER_TILES);
+
+  const visibleLeft = startCol * tileSize;
+  const visibleRight = endCol * tileSize;
+  const visibleTop = startRow * tileSize;
+  const visibleBottom = endRow * tileSize;
+
+  const isFootprintVisible = (left: number, top: number, w: number, h: number) =>
+    left + w > visibleLeft && left < visibleRight && top + h > visibleTop && top < visibleBottom;
+
   // 置物（家・井戸などのインタラクタブル＋見た目だけの木や花）と主人公をまとめて、
   // 「足元のマス（下端）」が上にあるものから順に描画する（＝Yソート）。
   // これにより、主人公が家の下側にいれば家より手前に、家の奥（上側）にいれば
@@ -244,12 +267,16 @@ export function GridExplorer({
 
     const w = interactable.widthTiles * tileSize;
     const h = interactable.heightTiles * tileSize;
+    const left = (interactable.x + 0.5) * tileSize - w / 2;
+    const top = (interactable.y + 1) * tileSize - h;
+
+    if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
 
     sprites.push({
       key: `interactable-${interactable.id}`,
       image: interactable.image,
-      left: (interactable.x + 0.5) * tileSize - w / 2,
-      top: (interactable.y + 1) * tileSize - h,
+      left,
+      top,
       width: w,
       height: h,
       sortY: interactable.y,
@@ -259,12 +286,16 @@ export function GridExplorer({
   for (const object of objects) {
     const w = object.widthTiles * tileSize;
     const h = object.heightTiles * tileSize;
+    const left = (object.x + 0.5) * tileSize - w / 2;
+    const top = (object.y + 1) * tileSize - h;
+
+    if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
 
     const sprite: Sprite = {
       key: `object-${object.id}`,
       image: object.image,
-      left: (object.x + 0.5) * tileSize - w / 2,
-      top: (object.y + 1) * tileSize - h,
+      left,
+      top,
       width: w,
       height: h,
       sortY: object.y,
@@ -281,7 +312,13 @@ export function GridExplorer({
 
   return (
     <div
-      className="relative overflow-hidden bg-black mx-auto"
+      // isolate: 修正済みのバグ。Yソート用にスプライトへ付けたz-index（GridExplorer内の
+      // 表示順を決めるための相対値で、マップが大きいほど大きな値になる。80台になることもある）が、
+      // このコンポーネントの外側にある会話ウィンドウ（StoryDialogue.tsxのz-50オーバーレイ）
+      // より大きくなってしまい、木や家のスプライトが会話ウィンドウの上に表示されてしまう
+      // ことがあった。isolateで新しいスタッキングコンテキストを作ることで、内部のz-indexが
+      // 外側の要素と競合しないように閉じ込めている
+      className="relative isolate overflow-hidden bg-black mx-auto"
       style={{ width: viewportWidth, height: viewportHeight }}
     >
       <div
@@ -295,43 +332,56 @@ export function GridExplorer({
           transitionDuration: `${STEP_INTERVAL_MS}ms`,
         }}
       >
-      {/* 床レイヤー。floorTexturesがあればマスごとに草/土/水の画像を敷き詰め、無ければ色分けプレースホルダー */}
+      {/* 床レイヤー。floorTexturesがあればマスごとに草/土/水の画像を敷き詰め、無ければ色分けプレースホルダー。
+          画面に映る範囲＋余白ぶんの行・列だけをslice()で切り出して描画する（ビューポートカリング） */}
       {floorTextures
-        ? floorTextures.map((row, y) =>
-            row.map((floorType, x) => (
-              <div
-                key={`floor-${x}-${y}`}
-                className="absolute"
-                style={{
-                  left: x * tileSize,
-                  top: y * tileSize,
-                  width: tileSize,
-                  height: tileSize,
-                  backgroundImage: `url(${FLOOR_TILE_IMAGES[floorType]})`,
-                  backgroundSize: "100% 100%",
-                  imageRendering: "pixelated",
-                }}
-              />
-            ))
-          )
-        : map.tiles.map((row, y) =>
-            row.map((tile, x) => (
-              <div
-                key={`${x}-${y}`}
-                className={
-                  tile === "wall"
-                    ? "absolute bg-gray-800 border border-gray-900"
-                    : "absolute bg-green-700 border border-green-800/50"
-                }
-                style={{
-                  left: x * tileSize,
-                  top: y * tileSize,
-                  width: tileSize,
-                  height: tileSize,
-                }}
-              />
-            ))
-          )}
+        ? floorTextures.slice(startRow, endRow).map((row, rowIndex) => {
+            const y = rowIndex + startRow;
+
+            return row.slice(startCol, endCol).map((floorType, colIndex) => {
+              const x = colIndex + startCol;
+
+              return (
+                <div
+                  key={`floor-${x}-${y}`}
+                  className="absolute"
+                  style={{
+                    left: x * tileSize,
+                    top: y * tileSize,
+                    width: tileSize,
+                    height: tileSize,
+                    backgroundImage: `url(${FLOOR_TILE_IMAGES[floorType]})`,
+                    backgroundSize: "100% 100%",
+                    imageRendering: "pixelated",
+                  }}
+                />
+              );
+            });
+          })
+        : map.tiles.slice(startRow, endRow).map((row, rowIndex) => {
+            const y = rowIndex + startRow;
+
+            return row.slice(startCol, endCol).map((tile, colIndex) => {
+              const x = colIndex + startCol;
+
+              return (
+                <div
+                  key={`${x}-${y}`}
+                  className={
+                    tile === "wall"
+                      ? "absolute bg-gray-800 border border-gray-900"
+                      : "absolute bg-green-700 border border-green-800/50"
+                  }
+                  style={{
+                    left: x * tileSize,
+                    top: y * tileSize,
+                    width: tileSize,
+                    height: tileSize,
+                  }}
+                />
+              );
+            });
+          })}
 
       {/* 地面に貼りつく置物（花など。groundLevel: true）。Yソートせず、常に主人公より奥に敷く */}
       {groundSprites.map((sprite) => (
@@ -355,9 +405,12 @@ export function GridExplorer({
           専用スプライトが無い歩き回るNPCなど）。歩き回るNPCは位置が変わるので、
           主人公と同じtransitionでなめらかに移動して見えるようにしている
           （動かないものには単に効果がないだけ）。imageを持つものは下のYソート
-          スプライトの方で描画するので、二重に表示しないようここでは除外する */}
+          スプライトの方で描画するので、二重に表示しないようここでは除外する。
+          画面外のものは描画しない（ビューポートカリング） */}
       {interactables.map((interactable) =>
-        interactable.label && !interactable.image ? (
+        interactable.label &&
+        !interactable.image &&
+        isFootprintVisible(interactable.x * tileSize, interactable.y * tileSize, tileSize, tileSize) ? (
           <div
             key={interactable.id}
             className="absolute flex items-center justify-center text-2xl ease-linear"
@@ -375,55 +428,63 @@ export function GridExplorer({
         ) : null
       )}
 
-      {/* 置物（image付きインタラクタブル＋見た目だけの木や花など）と主人公を、
-          足元マスが上にあるものから順に描画（Yソート）。主人公は自分のyの位置に割り込ませる */}
-      {(() => {
-        const beforePlayer = sprites.filter((s) => s.sortY <= playerPos.y);
-        const afterPlayer = sprites.filter((s) => s.sortY > playerPos.y);
+      {/*
+        置物（image付きインタラクタブル＋見た目だけの木や花など）と主人公を、
+        足元マスが上にあるものから順に「見える」ように重ねる（Yソート）。
 
-        const renderSprite = (sprite: Sprite) => (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            key={sprite.key}
-            src={sprite.image}
-            alt=""
-            className="absolute pointer-events-none select-none ease-linear"
-            style={{
-              left: sprite.left,
-              top: sprite.top,
-              width: sprite.width,
-              height: sprite.height,
-              imageRendering: "pixelated",
-              // 歩き回るNPC（画像付き）が主人公と同じ速さでなめらかに移動して見えるように。
-              // 動かない置物（家・木など）には単に効果がないだけ
-              transitionProperty: "left, top",
-              transitionDuration: `${STEP_INTERVAL_MS}ms`,
-            }}
-          />
-        );
-
-        return (
-          <>
-            {beforePlayer.map(renderSprite)}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={PLAYER_IMAGES[facing]}
-              alt=""
-              className="absolute pointer-events-none select-none ease-linear"
-              style={{
-                left: playerPos.x * tileSize,
-                top: playerPos.y * tileSize,
-                width: tileSize,
-                height: tileSize,
-                imageRendering: "pixelated",
-                transitionProperty: "left, top",
-                transitionDuration: `${STEP_INTERVAL_MS}ms`,
-              }}
-            />
-            {afterPlayer.map(renderSprite)}
-          </>
-        );
-      })()}
+        修正済みのバグ：以前はsprites配列を主人公のyで前半・後半に分け、DOM上の
+        並び順（後に書いた要素が手前に出る）でYソートを表現していた。この方式だと、
+        主人公が1マス上下に動くたびに「どのスプライトが前半/後半に属するか」が
+        入れ替わり、Reactが該当スプライトのDOMノードを実際に別の位置へ移動させる
+        （挿入し直す）必要があった。ノードの移動はブラウザにとって単なるスタイル
+        変更より重く、進行中のCSSトランジション（滑らかな移動アニメーション）も
+        その瞬間に中断されてしまうため、上下移動のときだけカクついて見えていた
+        （左右移動はxしか変わらずYソートの前後関係が変わらないので、この問題が
+        起きずスムーズだった）。
+        対策として、DOM上の並び順は触らず（スプライト同士の並び順はどのみち
+        お互いのsortYが変わらない限り不変）、CSSのz-indexだけでYソートを表現する
+        方式に変えた。sprite側はsortY*2、主人公はplayerPos.y*2+1という値を使うことで、
+        「sortYが主人公以下のスプライトは主人公より奥、より大きいスプライトは
+        主人公より手前」という以前と同じ見た目を、DOMノードを一切動かさずに実現できる
+        （React側はleft/top/zIndexのスタイル更新だけで済み、トランジションが途切れない）
+      */}
+      {sprites.map((sprite) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={sprite.key}
+          src={sprite.image}
+          alt=""
+          className="absolute pointer-events-none select-none ease-linear"
+          style={{
+            left: sprite.left,
+            top: sprite.top,
+            width: sprite.width,
+            height: sprite.height,
+            zIndex: sprite.sortY * 2,
+            imageRendering: "pixelated",
+            // 歩き回るNPC（画像付き）が主人公と同じ速さでなめらかに移動して見えるように。
+            // 動かない置物（家・木など）には単に効果がないだけ
+            transitionProperty: "left, top",
+            transitionDuration: `${STEP_INTERVAL_MS}ms`,
+          }}
+        />
+      ))}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={PLAYER_IMAGES[facing]}
+        alt=""
+        className="absolute pointer-events-none select-none ease-linear"
+        style={{
+          left: playerPos.x * tileSize,
+          top: playerPos.y * tileSize,
+          width: tileSize,
+          height: tileSize,
+          zIndex: playerPos.y * 2 + 1,
+          imageRendering: "pixelated",
+          transitionProperty: "left, top",
+          transitionDuration: `${STEP_INTERVAL_MS}ms`,
+        }}
+      />
 
       {/*
         当たり判定デバッグ表示（gキーでON/OFF）。

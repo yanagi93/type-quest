@@ -11,6 +11,17 @@
         "cd /home/user/repositories/type-quest/frontend && npm run dev"
       ],
       "port": 3000
+    },
+    {
+      "name": "frontend-dev-alt",
+      "runtimeExecutable": "wsl.exe",
+      "runtimeArgs": [
+        "-e",
+        "bash",
+        "-lc",
+        "cd /home/user/repositories/type-quest/frontend && npm run dev -- -p 3003"
+      ],
+      "port": 3003
     }
   ]
 }

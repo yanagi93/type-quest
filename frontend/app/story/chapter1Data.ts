@@ -1,25 +1,6 @@
 import type { FloorTileType, GridMap, Interactable, PlacedObject, WandererDefinition } from "./types";
 
-// 第1章「はじまりの草原」で使うマップ・インタラクタブルのデータ。
-
-function makeRect(width: number, height: number, gapAt?: { x: number; y: number }) {
-  const tiles: GridMap["tiles"] = [];
-
-  for (let y = 0; y < height; y++) {
-    const row: GridMap["tiles"][number] = [];
-
-    for (let x = 0; x < width; x++) {
-      const isBorder = x === 0 || y === 0 || x === width - 1 || y === height - 1;
-      const isGap = gapAt && gapAt.x === x && gapAt.y === y;
-
-      row.push(isBorder && !isGap ? "wall" : "floor");
-    }
-
-    tiles.push(row);
-  }
-
-  return tiles;
-}
+// 第1章「はじまりの村」で使うマップ・インタラクタブルのデータ。
 
 // ============================================================
 // 当たり判定（村マップ）の仕組み
@@ -46,6 +27,10 @@ function makeRect(width: number, height: number, gapAt?: { x: number; y: number 
 export const TOWN_TILE_SIZE = 48;
 const TOWN_GRID_WIDTH = 48;
 const TOWN_GRID_HEIGHT = 44;
+
+// ボスに挑めるようになる条件（覚えた単語の数）。村の門のセリフでも使うので、
+// 先に定義しておく
+export const BOSS_UNLOCK_WORD_COUNT = 3;
 
 export const TOWN_INTERACTABLES: Interactable[] = [
   {
@@ -78,9 +63,15 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 21,
     interactionY: 7,
+    // 長老自身は不在の体（姿はプロローグのELDER_VISIT_LINESで見せている）ので、
+    // 長老の直接セリフは無し。代わりに、机の本が『言霊の書』以外すべて白紙だった
+    // という発見をコトと話す場面にしてある（言葉の力が失われた、という世界観を
+    // 補強する小さな伏線。立ち絵はgetPortraitsForInteractableで主人公・コトを表示）
     dialogue: [
-      "長老の家だ。",
-      "長老「言霊の書を手掛かりに、村の中や外を歩いて言葉を探すのじゃ。」",
+      "長老の家だ。机の上に、言霊についての古い本が何冊も積まれている。",
+      "手に取ってみると……『言霊の書』以外は、どれも白紙だった。",
+      "コト「文字が消えちゃってる……言葉の力が失われたせいなのかな。」",
+      "コト「この『言霊の書』だけが、唯一残っているんだね。」",
     ],
   },
   {
@@ -121,8 +112,12 @@ export const TOWN_INTERACTABLES: Interactable[] = [
       "コト「気持ちよさそうな風……これは『かぜ』っていう言霊だよ！」",
     ],
   },
+  // 宿屋・武器屋：frontend/DESIGN.md 7.1節の第1章マップ構成「宿屋・武器屋・長老の家・井戸」に
+  // 合わせて、以前は空き家だった建物2つをそれぞれ差し替えた。ショップ機能（回復・購入等）は
+  // まだ実装していないので、今は建物として存在するだけの地の文にとどめている
+  // （2章「砂漠の町」でショップ・通貨システムを実装するときに、ここも中身を作り込む）
   {
-    id: "house-nw",
+    id: "house-inn",
     x: 14,
     y: 14,
     kind: "npc",
@@ -134,10 +129,10 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 13,
     interactionY: 14,
-    dialogue: ["誰もいないようだ。住人は村のどこかを歩き回っているらしい。"],
+    dialogue: ["宿屋のようだ。今はまだ誰もいない。", "コト「泊まれるようになるのは、もう少し先みたいだね。」"],
   },
   {
-    id: "house-e",
+    id: "house-weapon-shop",
     x: 33,
     y: 24,
     kind: "npc",
@@ -149,7 +144,7 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 32,
     interactionY: 24,
-    dialogue: ["誰もいないようだ。住人は村のどこかを歩き回っているらしい。"],
+    dialogue: ["武器屋のようだ。棚はまだ空っぽだ。", "コト「装備を買えるお店は、また今度みたいだね。」"],
   },
   {
     id: "house-sw",
@@ -295,7 +290,7 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     grantsItem: "hp",
     dialogue: ["家のそばに、しっかりした樽が置いてある。", "コト「開けてみるね……」"],
   },
-  // 木・花・草。井戸と同じく、専用の画像は置かずコトが教えてくれるだけの
+  // 木・草。井戸と同じく、専用の画像は置かずコトが教えてくれるだけの
   // シンプルな発見スポット（widthTiles/heightTilesを持たないので当たり判定には
   // 影響しない。既にある木・花壇の近くに置いてある）
   {
@@ -307,14 +302,26 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     teachesWord: { kana: "き", kanji: "木" },
     dialogue: ["大きな木が影を作っている。", "コト「大きな木……これは『き』っていう言霊だよ！」"],
   },
+  // 花壇（見た目はTOWN_OBJECTSにあった置物と同じkadan.png）。以前は花壇と無関係の
+  // 見えないマスで「はな」を教えていたが、実際に花壇にぶつかったときに教える形に変更した。
+  // コトに出会った直後、最初に案内される場所でもあるので（TUTORIAL_START_POS参照）、
+  // 「言葉を見つける」というゲームの基本操作をここで説明する役目も持たせている
   {
-    id: "flower-word",
-    x: 26,
-    y: 12,
+    id: "flowerbed-elder",
+    x: 27,
+    y: 6,
     kind: "object",
-    label: "🌸",
+    label: "",
+    image: "/images/map/okimono/kadan.png",
+    widthTiles: 3,
+    heightTiles: 2,
     teachesWord: { kana: "はな", kanji: "花" },
-    dialogue: ["色とりどりの花が咲いている。", "コト「きれいな花……これは『はな』っていう言霊だよ！」"],
+    dialogue: [
+      "長老の家のそばに、色とりどりの花壇がある。",
+      "コト「きれいな花……これは『はな』っていう言霊だよ！」",
+      "コト「これが『言葉集め』の基本だよ。物に近づいてぶつかると、思い出せる言葉が見つかるんだ。」",
+      "コト「同じように、いろんな物に触れて言葉を探してみてね！」",
+    ],
   },
   {
     id: "grass-word",
@@ -557,7 +564,6 @@ export const TOWN_OBJECTS: PlacedObject[] = [
   ...scatterObjects("flower", "/images/map/okimono/hana.png", { widthTiles: 2, heightTiles: 2, groundLevel: true }, FLOWER_POSITIONS),
   ...scatterObjects("stone", "/images/map/okimono/isi.png", { widthTiles: 1, heightTiles: 1, blocksMovement: true }, STONE_POSITIONS),
   ...scatterObjects("fence", "/images/map/okimono/saku.png", { widthTiles: 1, heightTiles: 1, blocksMovement: true }, FENCE_POSITIONS),
-  { id: "flowerbed-elder", image: "/images/map/okimono/kadan.png", x: 27, y: 6, widthTiles: 3, heightTiles: 2, blocksMovement: true },
   { id: "flowerbed-cave", image: "/images/map/okimono/kadan.png", x: 44, y: 11, widthTiles: 3, heightTiles: 2, blocksMovement: true },
 ];
 
@@ -713,23 +719,25 @@ const FLOOR_CHAR_MAP: Record<string, FloorTileType> = {
   ".": "grass",
   "#": "dirt",
   "~": "water",
+  "s": "sand",
+  "o": "stone",
 };
 
-function parseTownFloorRows(rows: string[]): FloorTileType[][] {
-  if (rows.length !== TOWN_GRID_HEIGHT) {
-    throw new Error(`TOWN_FLOOR_ROWSは${TOWN_GRID_HEIGHT}行である必要があります（実際: ${rows.length}行）`);
+function parseFloorRows(rows: string[], expectedHeight: number, expectedWidth: number, label: string): FloorTileType[][] {
+  if (rows.length !== expectedHeight) {
+    throw new Error(`${label}は${expectedHeight}行である必要があります（実際: ${rows.length}行）`);
   }
 
   return rows.map((row, y) => {
-    if (row.length !== TOWN_GRID_WIDTH) {
-      throw new Error(`TOWN_FLOOR_ROWSの${y}行目は${TOWN_GRID_WIDTH}文字である必要があります（実際: ${row.length}文字）`);
+    if (row.length !== expectedWidth) {
+      throw new Error(`${label}の${y}行目は${expectedWidth}文字である必要があります（実際: ${row.length}文字）`);
     }
 
     return row.split("").map((char, x) => {
       const tile = FLOOR_CHAR_MAP[char];
 
       if (!tile) {
-        throw new Error(`TOWN_FLOOR_ROWSの(${x}, ${y})に不明な文字「${char}」があります。使えるのは ".", "#", "~" のみです`);
+        throw new Error(`${label}の(${x}, ${y})に不明な文字「${char}」があります。使えるのは ".", "#", "~", "s", "o" のみです`);
       }
 
       return tile;
@@ -737,7 +745,12 @@ function parseTownFloorRows(rows: string[]): FloorTileType[][] {
   });
 }
 
-export const TOWN_FLOOR_TEXTURES: FloorTileType[][] = parseTownFloorRows(TOWN_FLOOR_ROWS);
+export const TOWN_FLOOR_TEXTURES: FloorTileType[][] = parseFloorRows(
+  TOWN_FLOOR_ROWS,
+  TOWN_GRID_HEIGHT,
+  TOWN_GRID_WIDTH,
+  "TOWN_FLOOR_ROWS"
+);
 
 // 開始位置は井戸の広場のすぐ南（井戸自体は3x3の当たり判定を持つのでそこは避けている）
 export const TOWN_MAP: GridMap = {
@@ -745,41 +758,241 @@ export const TOWN_MAP: GridMap = {
   start: { x: 24, y: 26 },
 };
 
-export const FIELD_MAP: GridMap = {
-  tiles: makeRect(11, 9),
-  start: { x: 1, y: 7 },
-};
-
 // フィールドから村へ戻ったときに立つ位置。
 // 左右が壁・上下がインタラクタブルの行き止まりを避け、少なくとも1方向へ動ける場所にしている
 export const TOWN_REENTRY_POS = { x: 22, y: 34 };
 
+// コトに出会った直後（meetKoto終了後）だけ使う開始位置。第1章はコトの誘導で
+// 進むチュートリアルに近い体験にしたいので、通常の開始位置（井戸の近く）ではなく、
+// 最初に案内する花壇（flowerbed-elder、はなの言葉）のすぐ南に降ろす
+export const TUTORIAL_START_POS = { x: 27, y: 9 };
+
+// ============================================================
+// フィールド（村の外＝世界地図）
+// ============================================================
+// ドラクエのように、村（詳細な1:1スケールのマップ）と、村の外に広がる世界地図
+// （もっと大きな縮尺のミニマップ＝「縮図」）を、それぞれ別のマップとして持つ。
+// 村の門にぶつかるとこちらのFIELD_MAPへシーンごと切り替わる。
+//
+// 縮図らしさの表現として、村の1マス=48pxに対し、フィールドは1マス=80px
+// （FIELD_TILE_SIZE）と大きめにしてあり、木・岩などの置物も1マス=1つの塊として
+// 置く（村のような3x3の細かい木ではない）。その上でマス数自体も64×48と村より
+// 大幅に広くとり、「大陸を歩いているような」手応えのある広さにしてある
+// （最初は32×24だったが、「もっと大きく、さらに二倍くらいに」という要望を受けて
+// 縦横とも2倍に拡張した。村→ボス→さらに奥、と歩きごたえのある距離を用意し、
+// 道中に森・岩山・湖といった地形のかたまりを点在させることで、ただ広いだけでなく
+// 探索する意味を持たせている）。
+export const FIELD_TILE_SIZE = 80;
+const FIELD_GRID_WIDTH = 64;
+const FIELD_GRID_HEIGHT = 48;
+
+// 村へ戻る入り口（＝マップ上の「村」のアイコン）。ぶつかると村マップへ戻る。
+// 大陸の南寄りに置き、そこから北へ向かって奥地（ボス→未知の領域）が広がる構成にしてある
 export const FIELD_TOWN_ENTRANCE: Interactable = {
   id: "field-town-entrance",
-  x: 1,
-  y: 6,
+  x: 32,
+  y: 40,
   kind: "exit",
-  label: "🚪",
+  label: "🏠",
   exitsTo: "town",
   dialogue: ["村の門をくぐり、中へ戻った。"],
 };
 
+// frontend/DESIGN.md 7.1節の第1章マップ構成「草原→スライムの丘→スライムキング」に
+// 合わせて、ボスの足止めセリフで地名（スライムの丘）を紹介している
 export const FIELD_BOSS: Interactable = {
   id: "slime-king",
-  x: 9,
-  y: 1,
+  x: 32,
+  y: 24,
   kind: "boss",
   label: "👑",
   dialogue: [
-    "……何か強大な気配がする。",
+    "ここは『スライムの丘』……何か強大な気配がする。",
     "もう少し言葉を集めてから来た方が良さそうだ。",
   ],
 };
 
-export const FIELD_INTERACTABLES: Interactable[] = [FIELD_TOWN_ENTRANCE, FIELD_BOSS];
+// ============================================================
+// 他の章の本拠地への「行き先」だけ見える目印（ChapterSelect.tsxの鍵付き
+// プレースホルダーの、世界地図上での見せ方）
+// ============================================================
+// 「村を出て世界地図を歩いていると、まだ入れない別の場所が視界に入る」という
+// 世界の広がりを感じさせるための目印。frontend/DESIGN.md 7.1節の8章構成
+// （はじまりの村→砂漠の町→魔法の森→…→魔王大陸、という一本道のチェーン）に
+// 合わせて、2章「砂漠の町」・3章「魔法の森」への行き先を示す。実際に入れる
+// エリアはまだ無いので、ぶつかると「まだ早い」と言われるだけの目印にとどめている
+// （caveと同じ「コトに止められる」演出パターン）。章を実装するときは、この
+// IDの場所に本物の入り口を差し替えればよい
+export const FIELD_LANDMARKS: Interactable[] = [
+  {
+    id: "desert-town-entrance",
+    x: 12,
+    y: 16,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/tileset/castle_desert_town.png",
+    widthTiles: 1,
+    heightTiles: 2,
+    dialogue: [
+      "大陸の西に、砂に埋もれかけた町の城壁が見える。",
+      "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
+      "コト「今はまだ、足を踏み入れないほうがよさそうだね。」",
+    ],
+  },
+  {
+    id: "magic-forest-view",
+    x: 52,
+    y: 12,
+    kind: "object",
+    label: "🌲",
+    dialogue: [
+      "はるか遠くに、深い緑の森が広がっているのが見える。",
+      "コト「あそこは『魔法の森』……妖精が住んでいるって聞いたことがあるよ。」",
+      "コト「今の私たちには、まだ遠い場所だね。」",
+    ],
+  },
+];
 
-// ボスに挑めるようになる条件（覚えた単語の数）
-export const BOSS_UNLOCK_WORD_COUNT = 3;
+export const FIELD_INTERACTABLES: Interactable[] = [FIELD_TOWN_ENTRANCE, FIELD_BOSS, ...FIELD_LANDMARKS];
+
+// 大陸のあちこちに単発の木・岩を点在させて、ただの空き地ではなく探索しがいの
+// ある地形に見えるようにしてある。フィールドは村よりマス目1つが大きいので、
+// 木・岩は1マス=1つの塊として置く（村のような3x3の細かい木ではない）
+const FIELD_TREE_POSITIONS: [number, number][] = [
+  [20, 8], [28, 10], [40, 6], [4, 28], [4, 36], [24, 32], [56, 28], [60, 20], [36, 36], [8, 40],
+  [46, 20], [18, 30], [50, 40], [30, 18],
+];
+
+const FIELD_STONE_POSITIONS: [number, number][] = [
+  [36, 10], [20, 36], [44, 40], [8, 6], [48, 30], [16, 30], [56, 40], [12, 36],
+];
+
+const FIELD_TREE_SIZE = { widthTiles: 1, heightTiles: 1, blocksMovement: true };
+const FIELD_STONE_SIZE = { widthTiles: 1, heightTiles: 1, blocksMovement: true };
+
+// 砂漠の町（desert-town-entrance）を取り囲む砂丘と、魔法の森（magic-forest-view）を
+// 取り囲む木立。切り出したタイル素材（processed/、backend/DESIGN.mdではなく
+// public/images/map/okimono/tileset/に配置済み）を使い、行き先の目印がそれぞれの
+// 章のテーマ（砂漠／森）に見えるようにしている。どちらもリング状に配置し、
+// 南（砂丘）・北（木立）側に1マスぶんの隙間を空けて、内側の目印まで歩いて
+// 入れるようにしてある
+const TILESET_DIR = "/images/map/okimono/tileset";
+
+const DESERT_DUNE_RING: [number, number][] = [
+  [10, 14], [11, 14], [12, 14], [13, 14], [14, 14],
+  [10, 15], [14, 15],
+  [10, 16], [14, 16],
+  [10, 17], [14, 17],
+  [10, 18], [11, 18], [13, 18], [14, 18],
+];
+
+const FOREST_RING: [number, number][] = [
+  [50, 10], [51, 10], [52, 10], [53, 10], [54, 10],
+  [50, 11], [50, 13],
+  [54, 11], [54, 12], [54, 13],
+  [50, 14], [51, 14], [52, 14], [53, 14], [54, 14],
+];
+
+// リングを構成する1マスずつに、切り出した9枚の中から順番に別の絵をあてて、
+// 単調な繰り返しに見えないようにする（同じ絵が並ばないようにするための工夫）
+function scatterVariedTexture(
+  idPrefix: string,
+  textureBaseName: string,
+  variantCount: number,
+  positions: [number, number][]
+): PlacedObject[] {
+  return positions.map(([x, y], index) => ({
+    id: `${idPrefix}-${index}`,
+    image: `${TILESET_DIR}/${textureBaseName}_${(index % variantCount) + 1}.png`,
+    x,
+    y,
+    widthTiles: 1,
+    heightTiles: 1,
+    blocksMovement: true,
+  }));
+}
+
+// 砂地・岩地それぞれの雰囲気を補強する一点物の飾り。ピラミッドは2章「砂漠の町」の
+// マップ構成（frontend/app/story/WORLD_DESIGN.md参照）にも登場する建物なので、
+// 世界地図側にも一足先にちらっと見せておく伏線を兼ねている
+const FIELD_ACCENT_DECORATIONS: PlacedObject[] = [
+  { id: "field-pyramid", image: `${TILESET_DIR}/icon_pyramid.png`, x: 6, y: 10, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "field-hill-orange", image: `${TILESET_DIR}/icon_hill_orange.png`, x: 18, y: 10, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "field-hill-gray", image: `${TILESET_DIR}/icon_hill_gray.png`, x: 4, y: 20, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "field-crate", image: `${TILESET_DIR}/icon_crate_a.png`, x: 34, y: 22, widthTiles: 1, heightTiles: 1, blocksMovement: false },
+];
+
+export const FIELD_OBJECTS: PlacedObject[] = [
+  ...scatterObjects("field-tree", "/images/map/okimono/tree2.png", FIELD_TREE_SIZE, FIELD_TREE_POSITIONS),
+  ...scatterObjects("field-stone", "/images/map/okimono/isi.png", FIELD_STONE_SIZE, FIELD_STONE_POSITIONS),
+  ...scatterVariedTexture("desert-dune", "texture_sand_dune", 9, DESERT_DUNE_RING),
+  ...scatterVariedTexture("magic-forest-tree", "texture_forest", 9, FOREST_RING),
+  ...FIELD_ACCENT_DECORATIONS,
+];
+
+// フィールドの当たり判定。村と同じく、外周は必ず壁。木立・岩山（blocksMovement）の
+// 置いてあるマスも壁にする。フィールドの置物はすべて1x1マスなので、村のような
+// footprintOf/blockFootprintの矩形計算は不要で、該当マスをそのまま壁にするだけでよい
+function buildFieldTiles(): GridMap["tiles"] {
+  const tiles: GridMap["tiles"] = Array.from({ length: FIELD_GRID_HEIGHT }, () =>
+    Array<GridMap["tiles"][number][number]>(FIELD_GRID_WIDTH).fill("floor")
+  );
+
+  for (const object of FIELD_OBJECTS) {
+    if (!object.blocksMovement) continue;
+
+    tiles[object.y][object.x] = "wall";
+  }
+
+  for (let x = 0; x < FIELD_GRID_WIDTH; x++) {
+    tiles[0][x] = "wall";
+    tiles[FIELD_GRID_HEIGHT - 1][x] = "wall";
+  }
+  for (let y = 0; y < FIELD_GRID_HEIGHT; y++) {
+    tiles[y][0] = "wall";
+    tiles[y][FIELD_GRID_WIDTH - 1] = "wall";
+  }
+
+  return tiles;
+}
+
+// フィールドの床の見た目。村ほど込み入った地形が無いので、ASCIIを手書きせず
+// コードで生成している。村の門（FIELD_TOWN_ENTRANCE）からボス（FIELD_BOSS）へ
+// まっすぐ土の道を通し、東側に小さな湖を置いてある。新しく切り出したタイル素材
+// （sand/stone）を使って、砂漠の町（desert-town-entrance）の周りは砂地、
+// スライムの丘（FIELD_BOSS）の周りは岩地にして、それ以外は開けた草地にしてある。
+// 判定の優先順位は 湖 > 道 > 砂地 > 岩地 > 草地（デフォルト）
+const FIELD_PATH_X = 32;
+const FIELD_LAKE = { x0: 40, x1: 47, y0: 28, y1: 34 };
+const FIELD_SAND_REGION = { x0: 3, x1: 21, y0: 9, y1: 23 };
+const FIELD_STONE_REGION = { x0: 26, x1: 38, y0: 19, y1: 29 };
+
+function inRegion(x: number, y: number, region: { x0: number; x1: number; y0: number; y1: number }): boolean {
+  return x >= region.x0 && x <= region.x1 && y >= region.y0 && y <= region.y1;
+}
+
+const FIELD_FLOOR_ROWS: string[] = Array.from({ length: FIELD_GRID_HEIGHT }, (_, y) =>
+  Array.from({ length: FIELD_GRID_WIDTH }, (_, x) => {
+    if (x >= FIELD_LAKE.x0 && x <= FIELD_LAKE.x1 && y >= FIELD_LAKE.y0 && y <= FIELD_LAKE.y1) return "~";
+    if (x === FIELD_PATH_X && y >= FIELD_BOSS.y && y <= FIELD_TOWN_ENTRANCE.y) return "#";
+    if (inRegion(x, y, FIELD_SAND_REGION)) return "s";
+    if (inRegion(x, y, FIELD_STONE_REGION)) return "o";
+    return ".";
+  }).join("")
+);
+
+export const FIELD_FLOOR_TEXTURES: FloorTileType[][] = parseFloorRows(
+  FIELD_FLOOR_ROWS,
+  FIELD_GRID_HEIGHT,
+  FIELD_GRID_WIDTH,
+  "FIELD_FLOOR_ROWS"
+);
+
+// フィールドの開始位置は、村の門アイコン（FIELD_TOWN_ENTRANCE）のすぐ北
+export const FIELD_MAP: GridMap = {
+  tiles: buildFieldTiles(),
+  start: { x: FIELD_TOWN_ENTRANCE.x, y: FIELD_TOWN_ENTRANCE.y - 1 },
+};
 
 // 第1章で手に入る可能性のある言霊（言葉）の一覧。
 // state.wordsLearned にはkana（読み）だけが入っているので、

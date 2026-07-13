@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GridExplorer } from "./GridExplorer";
 import { StoryDialogue } from "./StoryDialogue";
@@ -19,20 +19,28 @@ import {
   TOWN_OBJECTS,
   TOWN_REENTRY_POS,
   FIELD_MAP,
+  FIELD_TILE_SIZE,
+  FIELD_FLOOR_TEXTURES,
+  FIELD_OBJECTS,
   FIELD_INTERACTABLES,
   BOSS_UNLOCK_WORD_COUNT,
   CHAPTER1_WORD_DICTIONARY,
   CHAPTER1_REQUIRED_WORDS,
+  TUTORIAL_START_POS,
 } from "./chapter1Data";
 import type { DialoguePortrait, Interactable } from "./types";
 
-const ENCOUNTER_CHANCE_PER_STEP = 0.15;
+// 敵が多すぎるという指摘を受けて0.15から引き下げた。さらに、戦闘から戻った直後に
+// また即エンカウントするとテンポが悪いので、SAFE_STEPS_AFTER_BATTLEぶんは必ず
+// 歩けるようにしている（stepsSinceBattleRef参照）
+const ENCOUNTER_CHANCE_PER_STEP = 0.08;
+const SAFE_STEPS_AFTER_BATTLE = 6;
 
 // 会話用の立ち絵画像（frontend/public/images/kaiwa/）。
 // マップ上の歩行用スプライトとは別に、会話ウィンドウ専用の絵が用意されている
 const PLAYER_PORTRAIT_IMAGE = "/images/kaiwa/syuzinkousyoumen.png";
 const KOTO_PORTRAIT_IMAGE = "/images/kaiwa/kotodamanosei1.png";
-const ELDER_PORTRAIT_IMAGE = "/images/kaiwa/murabito1.png";
+const ELDER_PORTRAIT_IMAGE = "/images/kaiwa/tyourou.png";
 // マップ上を歩くstrangerのスプライト（mura/nazosyounennumei.png）はフードを
 // 被った顔の見えない姿なので、会話用の立ち絵も同じ「正体不明」バージョン
 // （nazonoseinenhumei）にそろえてある。顔がはっきり見えるnazonoseinen1は、
@@ -112,8 +120,8 @@ const DREAM_BACKGROUNDS = [
 ];
 
 // 長老が直接しゃべると、おとぎ話のようなプロローグの雰囲気とちぐはぐになって
-// しまうため、ここは長老のセリフを直接引用せず、地の文の説明だけにしてある
-// （長老自身とちゃんと会話できるのは、町でhouse-elderにぶつかったとき）
+// しまうため、ここは長老のセリフを直接引用せず、地の文の説明だけにしてある。
+// 姿だけは専用の立ち絵（tyourou.png）で見せる（下のレンダー側でportraitsを渡す）
 const ELDER_VISIT_LINES = [
   "翌朝、村の長老に呼ばれ、一冊の古びた本を渡された。",
   "『言霊の書』――村の中を歩いて、思い出せる言葉を探すようにと言われた。",
@@ -132,15 +140,22 @@ const MEET_KOTO_BACKGROUNDS = [
   "/images/back-ground/meet-koto-2.png",
 ];
 
-// 長老の家を出た後、本を開いてコトに初めて会う場面
+// 長老の家を出た後、本を開いてコトに初めて会う場面。第1章はコトの誘導で進む
+// チュートリアルに近い体験にしたいので、最後にすぐそばの花壇へ案内する一言を
+// 加えてある（このシーンの終了後、TUTORIAL_START_POSで花壇のすぐ南に降りる）
 const MEET_KOTO_LINES = [
   "長老に渡された『言霊の書』を、そっと開いてみた。",
   "すると、本の中から小さな光がふわりと舞い上がった。",
   "コト「わあ、久しぶりの外だぁ！」",
   "コト「こんにちは！ 私はコト！」",
   "コト「世界中に散らばった言葉……言霊を、一緒に集めよう！」",
-  "コト「さあ、村を歩いてみよう。きっと思い出せる言葉があるはずだよ。」",
+  "コト「まずは近くにある花壇に行ってみよう。ほら、すぐそこだよ！」",
 ];
+
+// 誘導チュートリアルの最初の目標（花壇）。これを覚えるまでは、他の何にぶつかっても
+// handleBumpが花壇へ軌道修正する（下のTUTORIAL_TARGET_KANA/IDを参照）
+const TUTORIAL_TARGET_KANA = "はな";
+const TUTORIAL_TARGET_ID = "flowerbed-elder";
 
 const ENDING_LINES = [
   "スライムキングをたおした。",
@@ -166,14 +181,16 @@ type Dialogue = { lines: string[]; title?: string; portraits?: DialoguePortrait[
 // ぶつかった相手ごとに、会話ウィンドウの左右に出す立ち絵を決める。
 // ・樽: 主人公が左、コトが右（一緒に中身をのぞきこむイメージ）
 // ・村人・猫・犬（歩き回るNPC）: コト（か主人公）が左、相手が右
-// ・長老: 主人公が左、長老が右
 // ・井戸など、コトだけが解説する置物: コトのみ
-// 特に決まりが無いもの（出口・ボスの様子見など）は立ち絵無しにしている
+// 特に決まりが無いもの（出口・ボスの様子見など）は立ち絵無しにしている。
+// 長老の家（house-elder）は、長老がその場にいないのに壁越しに喋るのは不自然なので
+// 長老自身のセリフ・立ち絵は無し。ただし白紙の本を見つけてコトと話す場面はあるので、
+// 主人公・コトの立ち絵は出す（長老の姿はELDER_VISIT_LINESの場面でのみ見せる）
 function getPortraitsForInteractable(interactable: Interactable): DialoguePortrait[] | undefined {
   if (interactable.grantsItem) return [PLAYER_PORTRAIT, KOTO_RIGHT];
 
   if (interactable.id === "house-elder") {
-    return [PLAYER_PORTRAIT, { side: "right", name: "長老", image: ELDER_PORTRAIT_IMAGE }];
+    return [PLAYER_PORTRAIT, KOTO_RIGHT];
   }
 
   if (interactable.id === "stranger") {
@@ -212,7 +229,7 @@ function getPortraitsForInteractable(interactable: Interactable): DialoguePortra
   }
 
   // 洞窟でコトが直接止めてくれる場面。主人公・コトの2人での会話にする
-  if (interactable.id === "cave") {
+  if (interactable.id === "cave" || interactable.id === "forest-entrance" || interactable.id === "snow-mountain-view") {
     return [PLAYER_PORTRAIT, KOTO_RIGHT];
   }
 
@@ -230,6 +247,10 @@ export function StoryGame() {
   const { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry } = useStoryState();
   const [dialogue, setDialogue] = useState<Dialogue | null>(null);
   const [showMenu, setShowMenu] = useState(false);
+  // 戦闘（フィールドの雑魚戦）から戻った直後、最低SAFE_STEPS_AFTER_BATTLE歩は
+  // 次のエンカウントを発生させないための歩数カウンタ。0で始めるので、
+  // フィールドに出た直後の最初の数歩はガード無し（村を出てすぐは、この方針で問題ない）
+  const stepsSinceBattleRef = useRef(0);
 
   // 村を歩き回るNPC（村人・猫・犬）の現在位置。会話中や町にいない間は歩みを止める。
   // Reactのフックのルール上、シーンによる早期returnより前で必ず呼ぶ必要がある
@@ -245,6 +266,9 @@ export function StoryGame() {
     const result = readAndClearStoryBattleResult();
 
     if (!result) return;
+
+    // 戦闘から戻った直後は、次のエンカウントまでの猶予歩数をリセットする
+    stepsSinceBattleRef.current = 0;
 
     // 戦闘中に敵を倒して見つけた言葉は、勝敗に関わらずそのまま覚える
     result.learnedWords?.forEach((kana) => learnWord(kana));
@@ -326,6 +350,20 @@ export function StoryGame() {
 
   const handleBump = (interactable: Interactable) => {
     const portraits = getPortraitsForInteractable(interactable);
+
+    // コトの誘導チュートリアル中（まだ「はな」を覚えていない間）は、花壇以外の
+    // 何にぶつかってもその場のやり取りを処理せず、花壇へ軌道修正する。花壇を
+    // 覚えた瞬間にこの制限は外れ、以降は通常どおり自由に探索できる
+    const tutorialTargetLearned = state.wordsLearned.includes(TUTORIAL_TARGET_KANA);
+
+    if (!tutorialTargetLearned && interactable.id !== TUTORIAL_TARGET_ID) {
+      setDialogue({
+        lines: ["コト「あ、まずはさっきの花壇に行ってみようよ！」"],
+        portraits: [PLAYER_PORTRAIT, KOTO_RIGHT],
+        onComplete: () => setDialogue(null),
+      });
+      return;
+    }
 
     if (interactable.kind === "exit") {
       const destination = interactable.exitsTo;
@@ -434,7 +472,15 @@ export function StoryGame() {
   const handleFieldStep = (pos: { x: number; y: number }) => {
     update({ playerPos: pos });
 
+    stepsSinceBattleRef.current += 1;
+
+    // 前回の戦闘からSAFE_STEPS_AFTER_BATTLE歩は必ず歩けるようにする
+    // （戦闘直後にまたすぐ襲われるとテンポが悪い、という指摘への対応）
+    if (stepsSinceBattleRef.current < SAFE_STEPS_AFTER_BATTLE) return;
+
     if (Math.random() < ENCOUNTER_CHANCE_PER_STEP) {
+      stepsSinceBattleRef.current = 0;
+
       // フィールドの雑魚戦にも、ボス戦と同じく「見つけた（覚えた）言葉」とHPを渡す
       const words = encodeURIComponent(state.wordsLearned.join(","));
       const params =
@@ -512,6 +558,7 @@ export function StoryGame() {
           open
           lines={ELDER_VISIT_LINES}
           backgrounds={ELDER_VISIT_BACKGROUNDS}
+          portraits={[PLAYER_PORTRAIT, { side: "right", name: "長老", image: ELDER_PORTRAIT_IMAGE }]}
           onComplete={() => update({ scene: "meetKoto" })}
         />
       </div>
@@ -533,7 +580,7 @@ export function StoryGame() {
           lines={MEET_KOTO_LINES}
           portraits={[PLAYER_PORTRAIT, KOTO_RIGHT]}
           backgrounds={MEET_KOTO_BACKGROUNDS}
-          onComplete={() => update({ scene: "town", playerPos: TOWN_MAP.start })}
+          onComplete={() => update({ scene: "town", playerPos: TUTORIAL_START_POS })}
         />
       </div>
     );
@@ -599,21 +646,21 @@ export function StoryGame() {
       />
 
       <p className="text-white text-sm">
-        {isTown ? "はじまりの草原・村" : "はじまりの草原・外"} ｜ おぼえた言葉：
+        {isTown ? "はじまりの村" : "はじまりの村・外の草原"} ｜ おぼえた言葉：
         {requiredLearnedCount}/{BOSS_UNLOCK_WORD_COUNT} ｜ HP：{state.playerHp}/{state.maxPlayerHp}
       </p>
 
       <GridExplorer
         map={map}
         interactables={interactables}
-        objects={isTown ? TOWN_OBJECTS : undefined}
+        objects={isTown ? TOWN_OBJECTS : FIELD_OBJECTS}
         playerPos={state.playerPos}
         onMove={(pos) => update({ playerPos: pos })}
         onBump={handleBump}
         onStepOntoFloor={isTown ? undefined : handleFieldStep}
         isLocked={dialogue !== null || showMenu}
-        tileSize={isTown ? TOWN_TILE_SIZE : undefined}
-        floorTextures={isTown ? TOWN_FLOOR_TEXTURES : undefined}
+        tileSize={isTown ? TOWN_TILE_SIZE : FIELD_TILE_SIZE}
+        floorTextures={isTown ? TOWN_FLOOR_TEXTURES : FIELD_FLOOR_TEXTURES}
       />
 
       <p className="text-white/60 text-xs">

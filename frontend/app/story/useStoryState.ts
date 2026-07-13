@@ -1,8 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ITEM_HP_BONUS, POTION_HEAL_AMOUNT } from "../battle/difficulty";
+import { api } from "@/lib/api";
 
+// このストーリーの章ID。第1章しか無いので固定値（backend/DESIGN.md 2節の
+// story_progressテーブルはchapter_idを主キーの一部に持たせてあるので、
+// 章が増えたらここも章ごとに切り替える形にする）
+const CHAPTER_ID = 1;
+
+// "town"＝村の中（詳細な1:1スケールのマップ）、"field"＝村の外に広がる世界地図
+// （ドラクエのような、村より大きな縮尺のミニマップ）。別々のマップ・別シーンで、
+// 門にぶつかるとシーンごと切り替わる（一時期1枚の地続きマップに統合していたが、
+// 「本当にドラクエのように」という要望で元の2マップ構成に戻した）
 export type StoryScene = "select" | "prologue" | "intro" | "elderVisit" | "meetKoto" | "town" | "field" | "ending";
 
 export type Chapter1State = {
@@ -66,24 +76,72 @@ function saveState(state: Chapter1State) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ chapter1: state }));
 }
 
-// 第1章の進行状況（現在のシーン・プレイヤー位置・覚えた単語）をlocalStorageに永続化するフック。
-// /battle へ遷移してまた戻ってくる際に状態を維持するために必要。
+// 第1章の進行状況を永続化するフック。ログインしていなければ従来どおりlocalStorageのみ、
+// ログイン中はbackend/（Express、GET/PUT /api/progress）にも同期する
+// （backend/DESIGN.md 5節の方針：常にlocalStorageへ即書き込みつつ、ログイン中は
+// fire-and-forgetでバックエンドにも送る。通信失敗してもゲーム進行は止めない）。
+// /battle へ遷移してまた戻ってくる際に状態を維持するためにも必要。
 export function useStoryState() {
   const [state, setState] = useState<Chapter1State>(DEFAULT_STATE);
+  const isLoggedInRef = useRef(false);
 
   useEffect(() => {
-    setState(loadState());
+    let cancelled = false;
+
+    api
+      .me()
+      .then(async () => {
+        if (cancelled) return;
+
+        isLoggedInRef.current = true;
+
+        try {
+          const { state: remoteState } = await api.getProgress<Chapter1State>(CHAPTER_ID);
+
+          if (cancelled) return;
+
+          const merged = { ...DEFAULT_STATE, ...remoteState };
+
+          setState(merged);
+          saveState(merged);
+        } catch {
+          // サーバー側にまだセーブが無い（初回ログイン等）場合は、今持っている
+          // localStorageの内容（ゲスト時代のセーブかもしれない）をそのまま使う
+          if (!cancelled) setState(loadState());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState(loadState());
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const update = useCallback((patch: Partial<Chapter1State>) => {
-    setState((prev) => {
-      const next = { ...prev, ...patch };
+  // localStorageへ即保存しつつ、ログイン中はバックエンドへも送る共通ヘルパー
+  const persist = useCallback((next: Chapter1State) => {
+    saveState(next);
 
-      saveState(next);
-
-      return next;
-    });
+    if (isLoggedInRef.current) {
+      api.putProgress(CHAPTER_ID, next).catch(() => {
+        // 単発の通信失敗は無視する。次の更新時にまた送られるので自然にリカバリされる
+      });
+    }
   }, []);
+
+  const update = useCallback(
+    (patch: Partial<Chapter1State>) => {
+      setState((prev) => {
+        const next = { ...prev, ...patch };
+
+        persist(next);
+
+        return next;
+      });
+    },
+    [persist]
+  );
 
   const learnWord = useCallback((kana: string) => {
     setState((prev) => {
@@ -91,11 +149,11 @@ export function useStoryState() {
 
       const next = { ...prev, wordsLearned: [...prev.wordsLearned, kana] };
 
-      saveState(next);
+      persist(next);
 
       return next;
     });
-  }, []);
+  }, [persist]);
 
   // 樽・村人から、攻撃力の書・防御力の書・体力の書・ポーションのいずれかを手に入れる
   // （関数名・state名は元の「宝箱」のままだが、見た目は村の樽や村人からの贈り物に
@@ -114,11 +172,11 @@ export function useStoryState() {
         potions: item === "potion" ? prev.potions + 1 : prev.potions,
       };
 
-      saveState(next);
+      persist(next);
 
       return next;
     });
-  }, []);
+  }, [persist]);
 
   // 体力の書を1冊使う。その場でさいだいHPが上がり、HPも新しいさいだい値まで全回復する
   // （battle/page.tsxの試練の塔の宝箱と同じ効果量。ITEM_HP_BONUS参照）
@@ -134,11 +192,11 @@ export function useStoryState() {
         playerHp: nextMaxHp,
       };
 
-      saveState(next);
+      persist(next);
 
       return next;
     });
-  }, []);
+  }, [persist]);
 
   // ポーションを1本使う。体力の書と違い、さいだいHPは増えずその場でHPを回復するだけ
   const usePotion = useCallback(() => {
@@ -151,11 +209,11 @@ export function useStoryState() {
         playerHp: Math.min(prev.playerHp + POTION_HEAL_AMOUNT, prev.maxPlayerHp),
       };
 
-      saveState(next);
+      persist(next);
 
       return next;
     });
-  }, []);
+  }, [persist]);
 
   // 言霊の書に「旅の記憶」を1行記録する（セーブのたびにコトが書き加えてくれる、
   // ゲームの進行には影響しないプレイヤー向けの読み物）
@@ -166,11 +224,11 @@ export function useStoryState() {
         journalEntries: [...prev.journalEntries, entry],
       };
 
-      saveState(next);
+      persist(next);
 
       return next;
     });
-  }, []);
+  }, [persist]);
 
   return { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry };
 }

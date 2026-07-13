@@ -8,6 +8,7 @@ import { DotGothic16 } from "next/font/google";
 import { Card } from "@/components/ui/8bit/card";
 import { Button } from "@/components/ui/8bit/button";
 import { Input } from "@/components/ui/input";
+import { api, ApiError } from "@/lib/api";
 
 const dotFont = DotGothic16({
   weight: "400",
@@ -15,19 +16,28 @@ const dotFont = DotGothic16({
 });
 
 export default function LoginPage() {
-    
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const savedEmail = localStorage.getItem("email");
-  const savedPassword = localStorage.getItem("password");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // alert()はブラウザのネイティブモーダルで操作がブロックされてしまうので、
+  // フォーム内にメッセージを表示する方式にしてある
+  const [message, setMessage] = useState<string | null>(null);
 
-  const handleLogin = () => {
-    if (email === savedEmail && password === savedPassword) {
-        localStorage.setItem("isLoggedIn", "true");
-        router.push("/home");
-    } else {
-        alert("メールアドレスまたはパスワードが違います");
+  const handleLogin = async () => {
+    setMessage(null);
+    setIsSubmitting(true);
+
+    try {
+      // backend/（Express）で本物に検証する（backend/DESIGN.md参照）。
+      // 成功するとcookie（httpOnly JWT）が発行されるので、以後は
+      // ホーム画面側がGET /api/auth/meでログイン状態を判定する
+      await api.login(email, password);
+      router.push("/home");
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "ログインに失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setIsSubmitting(false);
     }
   };
   return (
@@ -70,11 +80,14 @@ export default function LoginPage() {
             />
           </div>
 
+          {message && <p className="text-sm text-red-600 text-center">{message}</p>}
+
           <Button
             className="w-full"
             onClick={handleLogin}
+            disabled={isSubmitting}
           >
-            ログイン
+            {isSubmitting ? "ログイン中…" : "ログイン"}
           </Button>
 
           <Button
