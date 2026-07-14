@@ -13,10 +13,26 @@ const CHAPTER_ID = 1;
 // （ドラクエのような、村より大きな縮尺のミニマップ）。別々のマップ・別シーンで、
 // 門にぶつかるとシーンごと切り替わる（一時期1枚の地続きマップに統合していたが、
 // 「本当にドラクエのように」という要望で元の2マップ構成に戻した）
-export type StoryScene = "select" | "prologue" | "intro" | "elderVisit" | "meetKoto" | "town" | "field" | "ending";
+// desertTown/fairyVillageは2章「砂漠の町」・3章「妖精の里」のエリアマップ
+// （フィールドの目印から入れるようになる。StoryGame.tsxのhandleBump参照）
+export type StoryScene =
+  | "select"
+  | "prologue"
+  | "intro"
+  | "elderVisit"
+  | "meetKoto"
+  | "town"
+  | "field"
+  | "ending"
+  | "desertTown"
+  | "fairyVillage";
 
 export type Chapter1State = {
   scene: StoryScene;
+  // 現在挑戦中の章。ボスを倒すたびに+1される（battle/page.tsxが渡す&chapter=、
+  // StoryGame.tsxの戦闘結果処理参照）。章が増えるたびに章選択画面で個別に
+  // 判定するのではなく、この数値だけを見ればどこまで進んだか分かるようにする狙い
+  currentChapter: number;
   playerPos: { x: number; y: number };
   wordsLearned: string[]; // 覚えた単語のkana
   bossDefeated: boolean;
@@ -41,6 +57,7 @@ export const DEFAULT_MAX_HP = 100;
 
 const DEFAULT_STATE: Chapter1State = {
   scene: "select",
+  currentChapter: 1,
   playerPos: { x: 0, y: 0 },
   wordsLearned: [],
   bossDefeated: false,
@@ -54,26 +71,110 @@ const DEFAULT_STATE: Chapter1State = {
   journalEntries: [],
 };
 
-function loadState(): Chapter1State {
-  if (typeof window === "undefined") return DEFAULT_STATE;
+// ============================================================
+// セーブスロット
+// ============================================================
+// オートセーブ（auto）1本と、手動セーブ（slot1〜3）3本の、計4本のスロットを持つ。
+// autoは今までどおり操作のたびに自動で上書きされ続ける「今遊んでいる内容」。
+// slot1〜3はプレイヤーが「セーブ」を選んだ瞬間の内容だけをコピーしたスナップショットで、
+// 明示的にセーブし直すまでは変化しない（タイトル画面の「つづきから」でどのスロットから
+// 再開するか選べる。StoryGame.tsx参照）
+export type SaveSlotId = "auto" | "slot1" | "slot2" | "slot3";
+export const MANUAL_SAVE_SLOT_IDS: SaveSlotId[] = ["slot1", "slot2", "slot3"];
+const ALL_SAVE_SLOT_IDS: SaveSlotId[] = ["auto", "slot1", "slot2", "slot3"];
+
+type SavedSlot = { state: Chapter1State; savedAt: string };
+type SaveFile = Partial<Record<SaveSlotId, SavedSlot>>;
+
+function loadSaveFile(): SaveFile {
+  if (typeof window === "undefined") return {};
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
 
-    if (!raw) return DEFAULT_STATE;
+    if (!raw) return {};
 
     const parsed = JSON.parse(raw);
 
-    return { ...DEFAULT_STATE, ...parsed.chapter1 };
+    // 修正済み：複数スロット対応の前は{chapter1: Chapter1State}という単一セーブ
+    // （オートセーブ1本のみ）の形式だった。それ以前に保存されたデータを開いても
+    // 進行状況を失わないよう、そのままautoスロットへ移行して読み込む
+    if (parsed && parsed.chapter1 && !parsed.slots) {
+      return {
+        auto: { state: { ...DEFAULT_STATE, ...parsed.chapter1 }, savedAt: new Date().toISOString() },
+      };
+    }
+
+    return (parsed && parsed.slots) || {};
   } catch {
-    return DEFAULT_STATE;
+    return {};
   }
 }
 
-function saveState(state: Chapter1State) {
+function saveSaveFile(file: SaveFile) {
   if (typeof window === "undefined") return;
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ chapter1: state }));
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ slots: file }));
+}
+
+function loadSlotState(id: SaveSlotId): Chapter1State {
+  const slot = loadSaveFile()[id];
+
+  return slot ? { ...DEFAULT_STATE, ...slot.state } : DEFAULT_STATE;
+}
+
+function writeSlotState(id: SaveSlotId, state: Chapter1State) {
+  const file = loadSaveFile();
+
+  file[id] = { state, savedAt: new Date().toISOString() };
+  saveSaveFile(file);
+}
+
+// つづきから・セーブ画面の一覧表示用に、スロット1個ぶんの中身を要約する。
+// 何も保存されていないスロットはnull（空き）を返す
+export type SlotSummary = {
+  id: SaveSlotId;
+  savedAt: string;
+  currentChapter: number;
+  sceneLabel: string;
+  wordsLearnedCount: number;
+};
+
+const SCENE_LABELS: Record<StoryScene, string> = {
+  select: "タイトル",
+  prologue: "プロローグ",
+  intro: "夢のシーン",
+  elderVisit: "長老の家",
+  meetKoto: "コトとの出会い",
+  town: "はじまりの村",
+  field: "外の草原",
+  ending: "エンディング",
+  desertTown: "砂漠の町",
+  fairyVillage: "妖精の里",
+};
+
+export function getSlotSummary(id: SaveSlotId): SlotSummary | null {
+  const slot = loadSaveFile()[id];
+
+  if (!slot) return null;
+
+  return {
+    id,
+    savedAt: slot.savedAt,
+    currentChapter: slot.state.currentChapter,
+    sceneLabel: SCENE_LABELS[slot.state.scene] ?? slot.state.scene,
+    wordsLearnedCount: slot.state.wordsLearned.length,
+  };
+}
+
+export function getAllSlotSummaries(): Record<SaveSlotId, SlotSummary | null> {
+  const result = {} as Record<SaveSlotId, SlotSummary | null>;
+
+  for (const id of ALL_SAVE_SLOT_IDS) {
+    result[id] = getSlotSummary(id);
+  }
+
+  return result;
 }
 
 // 第1章の進行状況を永続化するフック。ログインしていなければ従来どおりlocalStorageのみ、
@@ -82,7 +183,16 @@ function saveState(state: Chapter1State) {
 // fire-and-forgetでバックエンドにも送る。通信失敗してもゲーム進行は止めない）。
 // /battle へ遷移してまた戻ってくる際に状態を維持するためにも必要。
 export function useStoryState() {
-  const [state, setState] = useState<Chapter1State>(DEFAULT_STATE);
+  // 修正済みのバグ：以前はDEFAULT_STATEで初期化していたため、マウント直後の
+  // 一瞬（ログイン確認のAPI通信が返ってくるまでの間）は必ずまっさらな状態
+  // （wordsLearned:[]・scene:"select"等）になっていた。/battleからのハード
+  // ナビゲーション直後にちょうどこの一瞬が重なると、戦闘結果を反映する
+  // useEffect（StoryGame.tsx）がこのまっさらな状態に対してupdate()してしまい、
+  // 直後に非同期処理側がlocalStorageの内容で上書きする際、まだそのタイミングでは
+  // 保存されていた本来の進行状況（覚えた言葉・宝箱の開封状況など）が失われる
+  // 競合状態になっていた。useStateの初期値をlocalStorageから同期的に読み込む
+  // ことで、マウント直後から常に正しい状態になるようにした
+  const [state, setState] = useState<Chapter1State>(() => loadSlotState("auto"));
   const isLoggedInRef = useRef(false);
 
   useEffect(() => {
@@ -103,15 +213,15 @@ export function useStoryState() {
           const merged = { ...DEFAULT_STATE, ...remoteState };
 
           setState(merged);
-          saveState(merged);
+          writeSlotState("auto", merged);
         } catch {
           // サーバー側にまだセーブが無い（初回ログイン等）場合は、今持っている
-          // localStorageの内容（ゲスト時代のセーブかもしれない）をそのまま使う
-          if (!cancelled) setState(loadState());
+          // localStorageの内容（ゲスト時代のセーブかもしれない）をそのまま使う。
+          // 起動時点で既にlocalStorageから読み込み済みなので、ここでは何もしなくてよい
         }
       })
       .catch(() => {
-        if (!cancelled) setState(loadState());
+        // 未ログイン。起動時点で既にlocalStorageから読み込み済みなので何もしなくてよい
       });
 
     return () => {
@@ -119,9 +229,10 @@ export function useStoryState() {
     };
   }, []);
 
-  // localStorageへ即保存しつつ、ログイン中はバックエンドへも送る共通ヘルパー
+  // localStorageのautoスロットへ即保存しつつ、ログイン中はバックエンドへも送る
+  // 共通ヘルパー（自動セーブ。手動セーブのslot1〜3はsaveToSlotで別途行う）
   const persist = useCallback((next: Chapter1State) => {
-    saveState(next);
+    writeSlotState("auto", next);
 
     if (isLoggedInRef.current) {
       api.putProgress(CHAPTER_ID, next).catch(() => {
@@ -159,17 +270,17 @@ export function useStoryState() {
   // （関数名・state名は元の「宝箱」のままだが、見た目は村の樽や村人からの贈り物に
   // 差し替えてある）。どれも持ち物に貯まるだけで、体力の書・ポーションは持ち物画面
   // から使うまで効果が出ない（useHpBook/usePotion参照）。同じidからは一度しかもらえない
-  const openChest = useCallback((chestId: string, item: "attack" | "defense" | "hp" | "potion") => {
+  const openChest = useCallback((chestId: string, item: "attack" | "defense" | "hp" | "potion", count = 1) => {
     setState((prev) => {
       if (prev.chestsOpened.includes(chestId)) return prev;
 
       const next: Chapter1State = {
         ...prev,
         chestsOpened: [...prev.chestsOpened, chestId],
-        attackBooks: item === "attack" ? prev.attackBooks + 1 : prev.attackBooks,
-        defenseBooks: item === "defense" ? prev.defenseBooks + 1 : prev.defenseBooks,
-        hpBooks: item === "hp" ? prev.hpBooks + 1 : prev.hpBooks,
-        potions: item === "potion" ? prev.potions + 1 : prev.potions,
+        attackBooks: item === "attack" ? prev.attackBooks + count : prev.attackBooks,
+        defenseBooks: item === "defense" ? prev.defenseBooks + count : prev.defenseBooks,
+        hpBooks: item === "hp" ? prev.hpBooks + count : prev.hpBooks,
+        potions: item === "potion" ? prev.potions + count : prev.potions,
       };
 
       persist(next);
@@ -230,7 +341,42 @@ export function useStoryState() {
     });
   }, [persist]);
 
-  return { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry };
+  // 手動セーブ。今の進行状況を、選んだスロット（slot1〜3。autoは対象外）へ
+  // そのままスナップショットとしてコピーする。呼び出し側はslotIdをユーザーに選ばせる
+  // （MANUAL_SAVE_SLOT_IDS参照）
+  const saveToSlot = useCallback(
+    (id: SaveSlotId) => {
+      if (id === "auto") return;
+
+      writeSlotState(id, state);
+    },
+    [state]
+  );
+
+  // 指定したスロットの内容を読み込み、今のプレイ状態として復元する。
+  // 読み込んだ後の自動セーブは通常どおりautoスロットに書き込まれる
+  // （＝読み込んだ時点でautoの中身もこのスロットの内容に置き換わる）
+  const loadFromSlot = useCallback(
+    (id: SaveSlotId) => {
+      const loaded = loadSlotState(id);
+
+      setState(loaded);
+      persist(loaded);
+    },
+    [persist]
+  );
+
+  return {
+    state,
+    update,
+    learnWord,
+    openChest,
+    useHpBook,
+    usePotion,
+    addJournalEntry,
+    saveToSlot,
+    loadFromSlot,
+  };
 }
 
 // /battle との結果の受け渡し用（勝敗＋HP）。
@@ -244,6 +390,9 @@ export type StoryBattleResult = {
   // 戦闘中に敵を倒したときの低確率ドロップで見つけた、まだ覚えていなかった言葉
   // （kana）。勝敗に関わらず、見つけたものはそのまま持ち帰れる
   learnedWords?: string[];
+  // どの章のボスと戦ったか（battle/page.tsxのURLの&chapter=をそのまま渡す）。
+  // ボスに勝った場合、StoryGame.tsx側でcurrentChapterをこの値+1に進める
+  chapter?: number;
 };
 
 const BATTLE_RESULT_KEY = "storyBattleResult";

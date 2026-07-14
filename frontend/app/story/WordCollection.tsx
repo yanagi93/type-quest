@@ -37,8 +37,8 @@ export function WordCollection({ dictionary, wordsLearned }: WordCollectionProps
                   <p className="text-xs text-yellow-400 mt-1">
                     威力 {getWordPower(word.kana)}
                   </p>
-                  {word.required && (
-                    <p className="text-[10px] text-cyan-400">★ ボス解放に必要</p>
+                  {word.kana !== "はな" && (
+                    <p className="text-[10px] text-cyan-400">★ 外に出る条件にカウントされる</p>
                   )}
                 </>
               ) : (

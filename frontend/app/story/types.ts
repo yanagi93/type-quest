@@ -42,9 +42,14 @@ export type Interactable = {
   // どれも持ち物画面に貯まり、体力の書・ポーションは持ち物画面から使うと効果が出る
   // （攻撃力・防御力の書はボス戦開始時にまとめて自動で効果が乗る）
   grantsItem?: "attack" | "defense" | "hp" | "potion";
+  // grantsItem用。一度に何個渡すか（省略時は1個）。長老の家の裏の宝箱のように
+  // 「ポーション2個」のようにまとめて渡したいときに使う
+  grantsItemCount?: number;
   dialogue?: string[];
-  // kind: "exit" 用。ぶつかると別のマップ（シーン）へ切り替える
-  exitsTo?: "field" | "town";
+  // kind: "exit" 用。ぶつかると別のマップ（シーン）へ切り替える。
+  // desertTown/fairyVillageは、それぞれ2章「砂漠の町」・3章「妖精の里」の
+  // エリアマップ（chapter2Data.ts/chapter3Data.ts）への入り口
+  exitsTo?: "field" | "town" | "desertTown" | "fairyVillage";
 };
 
 // 会話や当たり判定を持たない、純粋な見た目だけの置物（木・花・柵・石など）。

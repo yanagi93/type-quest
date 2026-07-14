@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FloorTileType, GridMap, Interactable, PlacedObject } from "./types";
 
 // キーを押しっぱなしにしたときの1マス移動の間隔。
@@ -19,12 +19,92 @@ const DEFAULT_VIEWPORT_HEIGHT = 560;
 // 床の種類ごとの画像パス。どのマップでも共通で使う（chapter1に限らない汎用アセット）。
 // sand/stoneは切り出したタイル素材（public/images/map/okimono/tileset/）を使う
 const FLOOR_TILE_IMAGES: Record<FloorTileType, string> = {
-  grass: "/images/map/yuka/kusa.png",
-  dirt: "/images/map/yuka/tuti.png",
-  water: "/images/map/yuka/mizu.png",
+  // grass/dirtは、縁タイル（EDGE_TILE_IMAGES）と同じ色味に揃えた新しいタイル素材に
+  // 差し替えた（以前のkusa.png/tuti.pngは色味が違い、縁タイルとの境目が目立っていたため）
+  grass: "/images/map/okimono/tileset/floor_grass.png",
+  dirt: "/images/map/okimono/tileset/floor_dirt_brown.png",
+  water: "/images/map/okimono/tileset/floor_water_blue.png",
   sand: "/images/map/okimono/tileset/floor_sand_beige.png",
   stone: "/images/map/okimono/tileset/floor_stone_gray.png",
 };
+
+// 草と接する境界だけ、ベタ画像の代わりに敷く「縁」タイル。上下左右それぞれの方向に、
+// その方向のマスが草のときに使う専用画像がある（石には縁タイルを用意していない）。
+// これにより、土の道・砂地・水面が草に接する場所だけ自然な繋ぎ目に見えるようになる
+// （resolveFloorImages参照）
+type EdgeDirection = "top" | "bottom" | "left" | "right";
+const EDGE_TILE_IMAGES: Partial<Record<FloorTileType, Record<EdgeDirection, string>>> = {
+  dirt: {
+    top: "/images/map/okimono/tileset/texture_mud_straight_top.png",
+    bottom: "/images/map/okimono/tileset/texture_mud_straight_bottom.png",
+    left: "/images/map/okimono/tileset/texture_mud_straight_left.png",
+    right: "/images/map/okimono/tileset/texture_mud_straight_right.png",
+  },
+  sand: {
+    top: "/images/map/okimono/tileset/texture_sand_straight_top.png",
+    bottom: "/images/map/okimono/tileset/texture_sand_straight_bottom.png",
+    left: "/images/map/okimono/tileset/texture_sand_straight_left.png",
+    right: "/images/map/okimono/tileset/texture_sand_straight_right.png",
+  },
+  water: {
+    top: "/images/map/okimono/tileset/texture_water_straight_top.png",
+    bottom: "/images/map/okimono/tileset/texture_water_straight_bottom.png",
+    left: "/images/map/okimono/tileset/texture_water_straight_left.png",
+    right: "/images/map/okimono/tileset/texture_water_straight_right.png",
+  },
+};
+
+// 花入りの草タイル（ファイル名はdirtだが、実際は花の模様が入った草タイル。
+// 色味は普通の草タイルと同じ緑なので違和感なく混ぜられる）。
+// 草マスのうち、このくらいの割合をこのタイルに差し替えて、単調な緑の繰り返しに
+// 見えないようにする
+const GRASS_FLOWER_IMAGE = "/images/map/okimono/tileset/floor_dirt_light_flower.png";
+const FLOWER_GRASS_CHANCE = 0.12;
+
+// マス目の座標から、レンダーのたびに変わらない決定的な「乱数っぽい」値を作る
+// （Math.randomだと再レンダーのたびにどのマスが花になるか変わってチカチカして
+// しまうため、座標だけで決まるハッシュ関数にしてある）
+function pseudoRandom(x: number, y: number): number {
+  const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+// floorTexturesから、実際に敷く画像パスの2次元配列を作る。草以外のマスは、
+// 隣（上下左右）が草なら、その方向の縁タイルに差し替える。隣が草でなければ
+// 通常のベタ画像のまま。複数方向が同時に草のとき（角など）は、上→下→左→右の
+// 優先順で1方向だけ縁タイルにする（縁タイルは1方向分の柄しか無いため、完全に
+// 自然に見えるのは1方向だけ草に接しているときだけだが、複数方向のケースでも
+// 「どこかの方向だけ縁になる」だけで見た目が崩れるわけではない）
+function resolveFloorImages(floorTextures: FloorTileType[][]): string[][] {
+  const height = floorTextures.length;
+  const width = floorTextures[0]?.length ?? 0;
+
+  return floorTextures.map((row, y) =>
+    row.map((floorType, x) => {
+      const edges = EDGE_TILE_IMAGES[floorType];
+
+      if (!edges) {
+        if (floorType === "grass" && pseudoRandom(x, y) < FLOWER_GRASS_CHANCE) {
+          return GRASS_FLOWER_IMAGE;
+        }
+
+        return FLOOR_TILE_IMAGES[floorType];
+      }
+
+      const up = y > 0 ? floorTextures[y - 1][x] : undefined;
+      const down = y < height - 1 ? floorTextures[y + 1][x] : undefined;
+      const left = x > 0 ? floorTextures[y][x - 1] : undefined;
+      const right = x < width - 1 ? floorTextures[y][x + 1] : undefined;
+
+      if (up === "grass") return edges.top;
+      if (down === "grass") return edges.bottom;
+      if (left === "grass") return edges.left;
+      if (right === "grass") return edges.right;
+
+      return FLOOR_TILE_IMAGES[floorType];
+    })
+  );
+}
 
 // 主人公の向きごとの画像。矢印キーを押した方向に合わせて差し替える
 type FacingDirection = "up" | "down" | "left" | "right";
@@ -76,6 +156,13 @@ export function GridExplorer({
   viewportWidth = DEFAULT_VIEWPORT_WIDTH,
   viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
 }: GridExplorerProps) {
+  // 縁タイルの解決はマップ全体ぶん（数千マス）を毎回計算するのは無駄なので、
+  // floorTexturesの参照が変わったとき（マップ・シーン切り替え時）だけ計算し直す
+  const resolvedFloorImages = useMemo(
+    () => (floorTextures ? resolveFloorImages(floorTextures) : null),
+    [floorTextures]
+  );
+
   // 押されている方向キー（押した順）。一番最後に押したキーの方向へ進む
   const heldKeysRef = useRef<DirectionKey[]>([]);
   const playerPosRef = useRef(playerPos);
@@ -334,11 +421,11 @@ export function GridExplorer({
       >
       {/* 床レイヤー。floorTexturesがあればマスごとに草/土/水の画像を敷き詰め、無ければ色分けプレースホルダー。
           画面に映る範囲＋余白ぶんの行・列だけをslice()で切り出して描画する（ビューポートカリング） */}
-      {floorTextures
-        ? floorTextures.slice(startRow, endRow).map((row, rowIndex) => {
+      {floorTextures && resolvedFloorImages
+        ? resolvedFloorImages.slice(startRow, endRow).map((row, rowIndex) => {
             const y = rowIndex + startRow;
 
-            return row.slice(startCol, endCol).map((floorType, colIndex) => {
+            return row.slice(startCol, endCol).map((image, colIndex) => {
               const x = colIndex + startCol;
 
               return (
@@ -350,7 +437,7 @@ export function GridExplorer({
                     top: y * tileSize,
                     width: tileSize,
                     height: tileSize,
-                    backgroundImage: `url(${FLOOR_TILE_IMAGES[floorType]})`,
+                    backgroundImage: `url(${image})`,
                     backgroundSize: "100% 100%",
                     imageRendering: "pixelated",
                   }}

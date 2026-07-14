@@ -1,4 +1,4 @@
-import type { FloorTileType, GridMap, PlacedObject, TileType } from "./types";
+import type { FloorTileType, GridMap, Interactable, PlacedObject, TileType } from "./types";
 import {
   makeGrid,
   scatterObjects,
@@ -88,8 +88,45 @@ function buildDesertTownTiles(): TileType[][] {
 }
 
 export const DESERT_TOWN_FLOOR_TEXTURES: FloorTileType[][] = buildDesertTownFloor();
-// 開始位置は縦の大通りの南寄り（将来ここに町の入口を置く想定）
+// 開始位置は縦の大通りの南寄り（フィールドから入ってきたときにここに降りる）
 export const DESERT_TOWN_MAP: GridMap = buildAreaMap(buildDesertTownTiles(), { x: 16, y: 20 });
+
+// ============================================================
+// 砂漠の町の会話（フェーズ2：マップ同士のつながりを実装）
+// ============================================================
+// 出口（フィールドへ戻る）と、「もり」を教えてくれる旅人NPCの2つだけ用意した。
+// 宿屋・武器屋・防具屋の中身（ショップ機能）はまだ実装していない
+// （chapter1Data.tsの村と同じく、建物はまだ空き家の置物のまま）
+export const DESERT_TOWN_INTERACTABLES: Interactable[] = [
+  {
+    id: "desert-town-exit",
+    x: 16,
+    y: 22,
+    kind: "exit",
+    label: "",
+    exitsTo: "field",
+    dialogue: ["砂漠の町を出て、大陸の道へ戻った。"],
+  },
+  // この旅人が教えてくれる「もり」の言葉を覚えると、フィールドの
+  // magic-forest-view（3章「魔法の森」への目印）が実際に入れるようになる
+  // （StoryGame.tsxのhandleBump、id==="magic-forest-view"の特別扱い参照）
+  {
+    id: "desert-traveler",
+    x: 16,
+    y: 11,
+    kind: "npc",
+    label: "🧑",
+    image: "/images/map/mura/murabito3.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    teachesWord: { kana: "もり", kanji: "森" },
+    dialogue: [
+      "旅装束の男が、水を飲みながら休んでいる。",
+      "旅人「東からずっと歩いてきたんだが……緑の深い森を越えてきてね。」",
+      "旅人「あの『もり』の向こうには、不思議な力を持つ妖精がいるって噂だよ。」",
+    ],
+  },
+];
 
 // ------------------------------------------------------------
 // ② 砂漠（DESERT_DUNES_MAP）：町とピラミッドの間の道中

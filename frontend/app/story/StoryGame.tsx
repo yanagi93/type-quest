@@ -4,9 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GridExplorer } from "./GridExplorer";
 import { StoryDialogue } from "./StoryDialogue";
-import { ChapterSelect } from "./ChapterSelect";
+import { TitleScreen } from "./TitleScreen";
+import { SaveSlots } from "./SaveSlots";
 import { Menu } from "./Menu";
-import { useStoryState, readAndClearStoryBattleResult, DEFAULT_MAX_HP, type Chapter1State } from "./useStoryState";
+import {
+  useStoryState,
+  readAndClearStoryBattleResult,
+  DEFAULT_MAX_HP,
+  MANUAL_SAVE_SLOT_IDS,
+  getAllSlotSummaries,
+  type Chapter1State,
+} from "./useStoryState";
 import { useWanderers } from "./useWanderers";
 import { HomeButton } from "@/components/HomeButton";
 import { Button } from "@/components/ui/8bit/button";
@@ -25,10 +33,28 @@ import {
   FIELD_INTERACTABLES,
   BOSS_UNLOCK_WORD_COUNT,
   CHAPTER1_WORD_DICTIONARY,
-  CHAPTER1_REQUIRED_WORDS,
+  WORD_EXCLUDED_FROM_COUNT,
   TUTORIAL_START_POS,
 } from "./chapter1Data";
+import {
+  DESERT_TOWN_MAP,
+  DESERT_TOWN_INTERACTABLES,
+  DESERT_TOWN_OBJECTS,
+  DESERT_TOWN_TILE_SIZE,
+  DESERT_TOWN_FLOOR_TEXTURES,
+} from "./chapter2Data";
+import {
+  FAIRY_VILLAGE_MAP,
+  FAIRY_VILLAGE_INTERACTABLES,
+  FAIRY_VILLAGE_OBJECTS,
+  FAIRY_VILLAGE_TILE_SIZE,
+  FAIRY_VILLAGE_FLOOR_TEXTURES,
+} from "./chapter3Data";
 import type { DialoguePortrait, Interactable } from "./types";
+
+// 魔法の森（3章）への目印（magic-forest-view）を実際に開放する条件の言葉。
+// 砂漠の町の旅人（chapter2Data.ts、desert-traveler）から教わる
+const FOREST_UNLOCK_WORD = "もり";
 
 // 敵が多すぎるという指摘を受けて0.15から引き下げた。さらに、戦闘から戻った直後に
 // また即エンカウントするとテンポが悪いので、SAFE_STEPS_AFTER_BATTLEぶんは必ず
@@ -157,12 +183,17 @@ const MEET_KOTO_LINES = [
 const TUTORIAL_TARGET_KANA = "はな";
 const TUTORIAL_TARGET_ID = "flowerbed-elder";
 
+// 修正済み：以前はこの後 章選択画面（scene: "select"）に戻していたが、
+// 「章選択を挟まず、そのままフィールド探索に続けたい」という要望を受けて、
+// 最後にフィールド探索を促す一言を足し、onComplete側もフィールドへ直接つなげる
+// ようにした（StoryGame.tsx本体のuseEffect参照）
 const ENDING_LINES = [
   "スライムキングをたおした。",
   "『ゆうき』という言霊を思い出した。",
   "――夢の中、幼い自分が誰かたちと笑っている。",
   "けれど、顔だけがどうしても思い出せない。",
   "第1章 クリア！",
+  "コト「さあ、外に出て世界を探索してみよう！」",
 ];
 
 // HPが0になって力尽きたときに流れる、村に戻ってコトに励まされる復活シーン。
@@ -187,7 +218,10 @@ type Dialogue = { lines: string[]; title?: string; portraits?: DialoguePortrait[
 // 長老自身のセリフ・立ち絵は無し。ただし白紙の本を見つけてコトと話す場面はあるので、
 // 主人公・コトの立ち絵は出す（長老の姿はELDER_VISIT_LINESの場面でのみ見せる）
 function getPortraitsForInteractable(interactable: Interactable): DialoguePortrait[] | undefined {
-  if (interactable.grantsItem) return [PLAYER_PORTRAIT, KOTO_RIGHT];
+  // 樽（中身入り・空っぽ問わず）は主人公とコトが一緒に中をのぞきこむ構図で統一する
+  if (interactable.grantsItem || interactable.id.startsWith("barrel")) {
+    return [PLAYER_PORTRAIT, KOTO_RIGHT];
+  }
 
   if (interactable.id === "house-elder") {
     return [PLAYER_PORTRAIT, KOTO_RIGHT];
@@ -195,6 +229,10 @@ function getPortraitsForInteractable(interactable: Interactable): DialoguePortra
 
   if (interactable.id === "stranger") {
     return [PLAYER_PORTRAIT, { side: "right", name: "謎の青年", image: STRANGER_PORTRAIT_IMAGE }];
+  }
+
+  if (interactable.id === "sleepy-villager") {
+    return [KOTO_LEFT, { side: "right", name: "村人", image: "/images/kaiwa/murabito4.png" }];
   }
 
   // 猫・犬は専用の会話用立ち絵が無いので、マップ上と同じ画像をそのまま使う
@@ -219,34 +257,49 @@ function getPortraitsForInteractable(interactable: Interactable): DialoguePortra
     return [interactable.teachesWord ? KOTO_LEFT : PLAYER_PORTRAIT, rightPortrait];
   }
 
+  // 中央広場の木4本（「き」を覚える場所）・石の山（「いし」を覚える場所）も、
+  // 井戸と同じくコトだけが解説する構図
   if (
     interactable.id === "well" ||
-    interactable.id === "tree-word" ||
-    interactable.id === "flower-word" ||
+    interactable.id.startsWith("plaza-tree-") ||
+    interactable.id === "stone-pile" ||
     interactable.id === "grass-word"
   ) {
     return [KOTO_LEFT];
   }
 
   // 洞窟でコトが直接止めてくれる場面。主人公・コトの2人での会話にする
-  if (interactable.id === "cave" || interactable.id === "forest-entrance" || interactable.id === "snow-mountain-view") {
+  // （入り口が2マス分あるので、cave-leftからでも同じ会話・同じ立ち絵になる）
+  if (interactable.id === "cave" || interactable.id === "cave-left") {
     return [PLAYER_PORTRAIT, KOTO_RIGHT];
   }
 
   return undefined;
 }
 
-// 覚えた言葉のうち、ボス解放に必要な言葉（みず・ひ・かぜ）を何個覚えたか。
-// ボス解放・村を出る条件の両方でこの数を使う
+// 覚えた言葉のうち、ボス解放・村を出る条件としてカウントする数。
+// 以前は「みず・ひ・かぜ」の3つだけを必須にしていたが、「別の言葉でもいい」という
+// 要望を受けて、「はな」以外の覚えた言葉ならなんでもカウントする方式に変更した
+// （はなは最初に必ず手に入る言葉なので、これ自体はノーカウントにしてある）
 function countRequiredWordsLearned(wordsLearned: string[]): number {
-  return CHAPTER1_REQUIRED_WORDS.filter((kana) => wordsLearned.includes(kana)).length;
+  return wordsLearned.filter((kana) => kana !== WORD_EXCLUDED_FROM_COUNT).length;
 }
 
 export function StoryGame() {
   const router = useRouter();
-  const { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry } = useStoryState();
+  const { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry, saveToSlot, loadFromSlot } =
+    useStoryState();
   const [dialogue, setDialogue] = useState<Dialogue | null>(null);
   const [showMenu, setShowMenu] = useState(false);
+  // 手動セーブ（セーブ1〜3）のスロット選択画面を表示中かどうか
+  const [showSaveSlots, setShowSaveSlots] = useState(false);
+  // セーブ完了後、一瞬だけ表示する確認メッセージ
+  const [saveConfirmMessage, setSaveConfirmMessage] = useState<string | null>(null);
+  // タイトル画面（はじめから／つづきから）を表示中かどうか。永続化されるstateとは
+  // 別の、このタブ・このマウントの間だけ有効なローカル表示フラグ。ページを開くと
+  // 必ずtrueから始まるので、セーブがあってもまずタイトルを一度経由させられる
+  // （逆に、つづきからを選べばstate.sceneはそのままなので、途中の場所から再開できる）
+  const [showTitle, setShowTitle] = useState(true);
   // 戦闘（フィールドの雑魚戦）から戻った直後、最低SAFE_STEPS_AFTER_BATTLE歩は
   // 次のエンカウントを発生させないための歩数カウンタ。0で始めるので、
   // フィールドに出た直後の最初の数歩はガード無し（村を出てすぐは、この方針で問題ない）
@@ -296,7 +349,14 @@ export function StoryGame() {
 
     if (result.encounter === "boss" && result.outcome === "win") {
       learnWord("ゆうき");
-      update({ ...patch, scene: "ending", bossDefeated: true });
+      // 倒したボスの章番号（&chapter=）+1を次の章として進める。読み取れない場合は
+      // 念のため現在のcurrentChapterをそのまま使う（章が進まないだけで、壊れはしない）
+      update({
+        ...patch,
+        scene: "ending",
+        bossDefeated: true,
+        currentChapter: (result.chapter ?? state.currentChapter) + 1,
+      });
     } else {
       // フィールド戦に勝った場合は、そのままの位置で探索へ戻るだけでよい
       update(patch);
@@ -309,9 +369,17 @@ export function StoryGame() {
   // なってしまうことがある。読み込んだ位置が現在のマップで床でなければ
   // （壁や範囲外なら）、そのマップの初期位置へ自動で戻す安全装置。
   useEffect(() => {
-    if (state.scene !== "town" && state.scene !== "field") return;
+    const walkableScenes = ["town", "field", "desertTown", "fairyVillage"] as const;
+    if (!walkableScenes.includes(state.scene as (typeof walkableScenes)[number])) return;
 
-    const map = state.scene === "town" ? TOWN_MAP : FIELD_MAP;
+    const map =
+      state.scene === "town"
+        ? TOWN_MAP
+        : state.scene === "desertTown"
+        ? DESERT_TOWN_MAP
+        : state.scene === "fairyVillage"
+        ? FAIRY_VILLAGE_MAP
+        : FIELD_MAP;
     const { x, y } = state.playerPos;
     const tile = map.tiles[y]?.[x];
 
@@ -321,9 +389,13 @@ export function StoryGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.scene, state.playerPos.x, state.playerPos.y]);
 
+  // タイトル画面の「はじめから」から呼ばれる。進行状況を完全にリセットして1章の
+  // プロローグから始める（「つづきから」はこれを呼ばず、今のstateのままタイトルを
+  // 閉じるだけ。StoryGame.tsx本体のshowTitle判定を参照）
   const handleEnterChapter1 = () => {
     update({
       scene: "prologue",
+      currentChapter: 1,
       playerPos: TOWN_MAP.start,
       wordsLearned: [],
       bossDefeated: false,
@@ -365,13 +437,34 @@ export function StoryGame() {
       return;
     }
 
+    // 魔法の森（3章）への目印。「もり」を覚えていれば実際に入れる特別扱い
+    // （データ上はずっとkind:"object"のままなので、ここで動的に判定している）
+    if (interactable.id === "magic-forest-view" && state.wordsLearned.includes(FOREST_UNLOCK_WORD)) {
+      setDialogue({
+        lines: [
+          "はるか遠くに見えていた深い緑の森が、すぐそこまで近づいている。",
+          "コト「『もり』の言葉のおかげで、道が見えるようになったのかも！」",
+          "コト「魔法の森へ、行ってみよう！」",
+        ],
+        portraits: [PLAYER_PORTRAIT, KOTO_RIGHT],
+        onComplete: () => {
+          setDialogue(null);
+          update({ scene: "fairyVillage", playerPos: FAIRY_VILLAGE_MAP.start });
+        },
+      });
+      return;
+    }
+
     if (interactable.kind === "exit") {
       const destination = interactable.exitsTo;
+      // 村の門（town-exit-1〜3）だけが、キングスライムとの戦闘チュートリアルへの
+      // 入り口になる。desertTown/fairyVillageからフィールドへ戻るときなど、
+      // 他の"field"行き出口では戦闘は発生しない（idで明確に区別している）
+      const isTownGate = interactable.id.startsWith("town-exit-");
 
-      // 村の外（フィールド）に出るには、最低限の言葉（みず・ひ・かぜ）を
-      // 集めておく必要がある。まだ足りない場合はコトに止められて外に出られない
-      // （ボスに挑めるようになる条件と同じ数を流用している）
-      if (destination === "field" && countRequiredWordsLearned(state.wordsLearned) < BOSS_UNLOCK_WORD_COUNT) {
+      // 村の外に出るには、最低限の言葉（はな以外で3つ）を集めておく必要がある。
+      // まだ足りない場合はコトに止められて外に出られない
+      if (isTownGate && countRequiredWordsLearned(state.wordsLearned) < BOSS_UNLOCK_WORD_COUNT) {
         setDialogue({
           lines: [
             "コト「待って！　まだ外に出るのは危ないよ。」",
@@ -389,11 +482,26 @@ export function StoryGame() {
         onComplete: () => {
           setDialogue(null);
 
-          if (destination === "field") {
-            update({ scene: "field", playerPos: FIELD_MAP.start });
-          } else if (destination === "town") {
-            update({ scene: "town", playerPos: TOWN_REENTRY_POS });
+          if (isTownGate) {
+            // 村の門を出る＝キングスライムとの戦闘チュートリアル。フィールドを
+            // 歩き回ってボスを探させるのではなく、門を出た瞬間に戦いが始まる形にした
+            // （フィールドに突っ立っているボスにいきなり触れてしまう事故を避けるため）。
+            // このバトルの勝敗が、そのまま第1章のボス戦の勝敗になる
+            // （&tutorial=1で/battle側にチュートリアル説明の表示を指示する）
+            const words = encodeURIComponent(state.wordsLearned.join(","));
+            const params =
+              `mode=story&chapter=1&encounter=boss&tutorial=1&words=${words}` +
+              `&attackBooks=${state.attackBooks}&defenseBooks=${state.defenseBooks}` +
+              `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
+
+            router.push(`/battle?${params}`);
+            return;
           }
+
+          if (destination === "field") update({ scene: "field", playerPos: FIELD_MAP.start });
+          else if (destination === "town") update({ scene: "town", playerPos: TOWN_REENTRY_POS });
+          else if (destination === "desertTown") update({ scene: "desertTown", playerPos: DESERT_TOWN_MAP.start });
+          else if (destination === "fairyVillage") update({ scene: "fairyVillage", playerPos: FAIRY_VILLAGE_MAP.start });
         },
       });
       return;
@@ -423,19 +531,21 @@ export function StoryGame() {
       return;
     }
 
-    // 樽の場合（攻撃力の書・防御力の書・体力の書のいずれかを手に入れる）
+    // 樽・宝箱の場合（攻撃力の書・防御力の書・体力の書・ポーションのいずれかを手に入れる）
     if (interactable.grantsItem) {
       const alreadyOpened = state.chestsOpened.includes(interactable.id);
+      const count = interactable.grantsItemCount ?? 1;
       const itemMeta = {
         attack: { label: "攻撃力の書", emoji: "📕", extra: "ボス戦のときに使えそうだよ。" },
         defense: { label: "防御力の書", emoji: "📗", extra: "ボス戦のときに使えそうだよ。" },
         hp: { label: "体力の書", emoji: "📘", extra: "持ち物から使うと、さいだいHPが上がって全回復するよ。" },
         potion: { label: "ポーション", emoji: "🧪", extra: "持ち物から使うとHPが少し回復するよ。" },
       }[interactable.grantsItem];
+      const countText = count > 1 ? `が${count}個も` : "が";
       const baseLines = interactable.dialogue ?? [];
       const lines = alreadyOpened
         ? [...baseLines, "コト「あれ、もう空っぽみたい。」"]
-        : [...baseLines, `コト「${itemMeta.emoji}『${itemMeta.label}』が入ってる！ ${itemMeta.extra}」`];
+        : [...baseLines, `コト「${itemMeta.emoji}『${itemMeta.label}』${countText}入ってる！ ${itemMeta.extra}」`];
 
       setDialogue({
         lines,
@@ -443,7 +553,7 @@ export function StoryGame() {
         onComplete: () => {
           setDialogue(null);
 
-          if (!alreadyOpened) openChest(interactable.id, interactable.grantsItem!);
+          if (!alreadyOpened) openChest(interactable.id, interactable.grantsItem!, count);
         },
       });
       return;
@@ -491,11 +601,17 @@ export function StoryGame() {
     }
   };
 
-  if (state.scene === "select") {
+  if (showTitle) {
     return (
-      <ChapterSelect
-        chapter1Complete={state.bossDefeated}
-        onEnterChapter1={handleEnterChapter1}
+      <TitleScreen
+        onNewGame={() => {
+          handleEnterChapter1();
+          setShowTitle(false);
+        }}
+        onSelectSlot={(id) => {
+          loadFromSlot(id);
+          setShowTitle(false);
+        }}
       />
     );
   }
@@ -507,10 +623,10 @@ export function StoryGame() {
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
         <HomeButton />
         <Button
-          onClick={() => update({ scene: "select" })}
+          onClick={() => setShowTitle(true)}
           className="fixed top-6 right-10 z-50"
         >
-          📖 章選択に戻る
+          🏠 タイトルに戻る
         </Button>
         <StoryDialogue
           open
@@ -528,10 +644,10 @@ export function StoryGame() {
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
         <HomeButton />
         <Button
-          onClick={() => update({ scene: "select" })}
+          onClick={() => setShowTitle(true)}
           className="fixed top-6 right-10 z-50"
         >
-          📖 章選択に戻る
+          🏠 タイトルに戻る
         </Button>
         <StoryDialogue
           open
@@ -549,10 +665,10 @@ export function StoryGame() {
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
         <HomeButton />
         <Button
-          onClick={() => update({ scene: "select" })}
+          onClick={() => setShowTitle(true)}
           className="fixed top-6 right-10 z-50"
         >
-          📖 章選択に戻る
+          🏠 タイトルに戻る
         </Button>
         <StoryDialogue
           open
@@ -570,10 +686,10 @@ export function StoryGame() {
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
         <HomeButton />
         <Button
-          onClick={() => update({ scene: "select" })}
+          onClick={() => setShowTitle(true)}
           className="fixed top-6 right-10 z-50"
         >
-          📖 章選択に戻る
+          🏠 タイトルに戻る
         </Button>
         <StoryDialogue
           open
@@ -594,15 +710,49 @@ export function StoryGame() {
           open
           title="エンディング"
           lines={ENDING_LINES}
-          onComplete={() => update({ scene: "select" })}
+          onComplete={() => update({ scene: "field", playerPos: FIELD_MAP.start })}
         />
       </div>
     );
   }
 
   const isTown = state.scene === "town";
-  const map = isTown ? TOWN_MAP : FIELD_MAP;
-  const interactables = isTown ? [...TOWN_INTERACTABLES, ...wanderers] : FIELD_INTERACTABLES;
+  const isDesertTown = state.scene === "desertTown";
+  const isFairyVillage = state.scene === "fairyVillage";
+  // 安全なエリア（村・砂漠の町・妖精の里）かどうか。フィールド（野外）だけ
+  // ランダムエンカウントが起きる（下のonStepOntoFloor参照）
+  const isSafeArea = isTown || isDesertTown || isFairyVillage;
+
+  const map = isTown ? TOWN_MAP : isDesertTown ? DESERT_TOWN_MAP : isFairyVillage ? FAIRY_VILLAGE_MAP : FIELD_MAP;
+  const interactables = isTown
+    ? [...TOWN_INTERACTABLES, ...wanderers]
+    : isDesertTown
+    ? DESERT_TOWN_INTERACTABLES
+    : isFairyVillage
+    ? FAIRY_VILLAGE_INTERACTABLES
+    : FIELD_INTERACTABLES;
+  const objects = isTown ? TOWN_OBJECTS : isDesertTown ? DESERT_TOWN_OBJECTS : isFairyVillage ? FAIRY_VILLAGE_OBJECTS : FIELD_OBJECTS;
+  const tileSize = isTown
+    ? TOWN_TILE_SIZE
+    : isDesertTown
+    ? DESERT_TOWN_TILE_SIZE
+    : isFairyVillage
+    ? FAIRY_VILLAGE_TILE_SIZE
+    : FIELD_TILE_SIZE;
+  const floorTextures = isTown
+    ? TOWN_FLOOR_TEXTURES
+    : isDesertTown
+    ? DESERT_TOWN_FLOOR_TEXTURES
+    : isFairyVillage
+    ? FAIRY_VILLAGE_FLOOR_TEXTURES
+    : FIELD_FLOOR_TEXTURES;
+  const sceneLabel = isTown
+    ? "はじまりの村"
+    : isDesertTown
+    ? "砂漠の町"
+    : isFairyVillage
+    ? "妖精の里"
+    : "はじまりの村・外の草原";
   // 表示用。ねこ・いぬなどのボーナスの言葉は含めず、ボス解放に必要な言葉だけを数える
   const requiredLearnedCount = countRequiredWordsLearned(state.wordsLearned);
 
@@ -610,12 +760,17 @@ export function StoryGame() {
     <div className="relative w-screen h-screen bg-slate-900 flex flex-col items-center justify-center gap-4">
       <HomeButton />
 
-      {/* 途中で章選択に戻りたいときのためのボタン。押すと確認なしで即座に章選択画面へ戻る */}
+      {/*
+        途中でタイトルに戻りたいときのためのボタン。押すとタイトル画面（はじめから／
+        つづきから）が表示される。stateはそのままなので、つづきからを選べば
+        今と同じ場所に戻ってこられる（showTitleはセッション内だけのローカルな表示
+        フラグで、セーブ内容自体には影響しない）
+      */}
       <Button
-        onClick={() => update({ scene: "select" })}
+        onClick={() => setShowTitle(true)}
         className="fixed top-6 right-10 z-50"
       >
-        📖 章選択に戻る
+        🏠 タイトルに戻る
       </Button>
 
       {/* 言霊の書・言葉の図鑑・持ち物・ステータスをまとめて開くボタン */}
@@ -625,6 +780,48 @@ export function StoryGame() {
       >
         📖 メニュー
       </Button>
+
+      {/*
+        手動セーブ。押すとセーブ1〜3のどこに保存するか選ぶ画面が出る（空き・埋まって
+        いる both選べる＝allowEmpty）。オートセーブは常に自動で進んでいるので、
+        ここではslot1〜3だけが選択肢になる（MANUAL_SAVE_SLOT_IDS）
+      */}
+      <Button
+        onClick={() => setShowSaveSlots(true)}
+        className="fixed top-32 left-10 z-50"
+      >
+        💾 セーブ
+      </Button>
+
+      {showSaveSlots && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
+          <div className="bg-slate-900 border-2 border-cyan-400 rounded-xl p-6 flex flex-col items-center gap-4">
+            <p className="text-white text-sm">どこにセーブしますか？</p>
+
+            <SaveSlots
+              slotIds={MANUAL_SAVE_SLOT_IDS}
+              summaries={getAllSlotSummaries()}
+              allowEmpty
+              onSelect={(id) => {
+                saveToSlot(id);
+                setShowSaveSlots(false);
+                setSaveConfirmMessage("セーブしました！");
+                window.setTimeout(() => setSaveConfirmMessage(null), 1500);
+              }}
+            />
+
+            <Button onClick={() => setShowSaveSlots(false)} className="text-sm">
+              キャンセル
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {saveConfirmMessage && (
+        <div className="fixed top-32 right-10 z-50 bg-cyan-900/90 border border-cyan-400 text-white text-sm px-4 py-2 rounded">
+          {saveConfirmMessage}
+        </div>
+      )}
 
       <Menu
         open={showMenu}
@@ -646,21 +843,21 @@ export function StoryGame() {
       />
 
       <p className="text-white text-sm">
-        {isTown ? "はじまりの村" : "はじまりの村・外の草原"} ｜ おぼえた言葉：
+        {sceneLabel} ｜ おぼえた言葉：
         {requiredLearnedCount}/{BOSS_UNLOCK_WORD_COUNT} ｜ HP：{state.playerHp}/{state.maxPlayerHp}
       </p>
 
       <GridExplorer
         map={map}
         interactables={interactables}
-        objects={isTown ? TOWN_OBJECTS : FIELD_OBJECTS}
+        objects={objects}
         playerPos={state.playerPos}
         onMove={(pos) => update({ playerPos: pos })}
         onBump={handleBump}
-        onStepOntoFloor={isTown ? undefined : handleFieldStep}
+        onStepOntoFloor={isSafeArea ? undefined : handleFieldStep}
         isLocked={dialogue !== null || showMenu}
-        tileSize={isTown ? TOWN_TILE_SIZE : FIELD_TILE_SIZE}
-        floorTextures={isTown ? TOWN_FLOOR_TEXTURES : FIELD_FLOOR_TEXTURES}
+        tileSize={tileSize}
+        floorTextures={floorTextures}
       />
 
       <p className="text-white/60 text-xs">

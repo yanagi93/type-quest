@@ -1,36 +1,43 @@
 import type { FloorTileType, GridMap, Interactable, PlacedObject, WandererDefinition } from "./types";
+import { parseWallRows } from "./mapGen";
 
 // 第1章「はじまりの村」で使うマップ・インタラクタブルのデータ。
 
 // ============================================================
 // 当たり判定（村マップ）の仕組み
 // ============================================================
-// 以前はTOWN_FLOOR_ROWSという当たり判定専用のASCII表を手書きしていたが、
-// 「家を動かしたのに当たり判定を直し忘れる」「置物と当たり判定がズレる」
-// という事故が何度も起きたため、今は当たり判定を手書きせず、
-// 実際に置いてある家・木・柵・石・花壇の位置と大きさから自動計算している
-// （下のbuildTownCollision関数）。なので、家や木の座標（x, y）を変えれば
-// 当たり判定も自動でついてくる。個別にASCII表を直す必要はない。
+// 以前は「家・木・柵・石・花壇の位置と大きさから当たり判定を自動計算する」方式
+// （buildTownTiles）だったが、村のマップ自体をマップエディタ（/story/map-editor）で
+// 作り直したのに合わせて、当たり判定もエディタで直接描いたASCII（TOWN_WALL_ROWS）を
+// そのまま使う方式に変更した。エディタ側で、家のドアの位置だけ床のまま残す描き方を
+// しているので、扉のマス（interactionX/Y）は今もTOWN_WALL_ROWS側の「床の隙間」と
+// 一致させてある（parseWallRowsで変換するだけで、家の周りの壁も扉もそのまま反映される）。
 //
-// ルール:
-// ・草地はどこでも歩ける（TOWN_INTERACTABLESやTOWN_OBJECTSが無いマスは全部床）
-// ・家・井戸・洞窟などのインタラクタブル（image付き）は、見た目の範囲がまるごと
-//   壁になる。ただし会話にぶつかれるように、足元のマス(x, y)自体は床のまま残す
-// ・TOWN_OBJECTSのうち blocksMovement: true の置物（木・柵・石・花壇）も、
-//   見た目の範囲がまるごと壁になる
-// ・花（hana.png）は blocksMovement を付けていないので、踏んでも通り抜けられる
+// 中央広場の木4本（「き」を覚える場所）だけは、エディタの置物レイヤーには置いたが
+// 壁レイヤーには描いていないため、木の幹の位置だけ床を残して周りを壁にする処理を
+// 下のbuildTownTilesで追加している（家のドアと同じ考え方）。
 //
-// マス目は48列 x 44行。ゲーム中に g キーを押すと、実際にどのマスが壁になって
+// マス目は48列 x 45行。ゲーム中に g キーを押すと、実際にどのマスが壁になって
 // いるか（赤）を背景に重ねて確認できる。
 // ============================================================
 
 export const TOWN_TILE_SIZE = 48;
 const TOWN_GRID_WIDTH = 48;
-const TOWN_GRID_HEIGHT = 44;
+const TOWN_GRID_HEIGHT = 45;
 
 // ボスに挑めるようになる条件（覚えた単語の数）。村の門のセリフでも使うので、
-// 先に定義しておく
+// 先に定義しておく。
+//
+// 以前は「みず・ひ・かぜ」の3つだけを「必須の言葉」として数えていたが、
+// 「別の言葉でもいいことにしたい（ねこ・いぬ等でもOK）」という要望を受けて、
+// 「はな」以外の覚えた言葉を何個持っているか、という数え方に変更した
+// （はなは最初に必ず手に入る言葉なので、これ自体はノーカウントにして、
+// 「はなを覚えたら、そこからさらに3つ集めよう」という導線にしている）。
+// 実際の数え方はStoryGame.tsxのcountRequiredWordsLearnedを参照。
 export const BOSS_UNLOCK_WORD_COUNT = 3;
+
+// 花以外は数えない、という判定に使う（StoryGame.tsx側と両方から参照する）
+export const WORD_EXCLUDED_FROM_COUNT = "はな";
 
 export const TOWN_INTERACTABLES: Interactable[] = [
   {
@@ -42,7 +49,6 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     image: "/images/map/okimono/ido.png",
     widthTiles: 3,
     heightTiles: 3,
-    // 木のてっぺんと同じ理由で、井戸も一番上の段だけ当たり判定を外している
     collisionHeightTiles: 2,
     teachesWord: { kana: "みず", kanji: "水" },
     dialogue: [
@@ -63,10 +69,6 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 21,
     interactionY: 7,
-    // 長老自身は不在の体（姿はプロローグのELDER_VISIT_LINESで見せている）ので、
-    // 長老の直接セリフは無し。代わりに、机の本が『言霊の書』以外すべて白紙だった
-    // という発見をコトと話す場面にしてある（言葉の力が失われた、という世界観を
-    // 補強する小さな伏線。立ち絵はgetPortraitsForInteractableで主人公・コトを表示）
     dialogue: [
       "長老の家だ。机の上に、言霊についての古い本が何冊も積まれている。",
       "手に取ってみると……『言霊の書』以外は、どれも白紙だった。",
@@ -96,7 +98,7 @@ export const TOWN_INTERACTABLES: Interactable[] = [
   {
     id: "house-wind",
     x: 7,
-    y: 24,
+    y: 23,
     kind: "npc",
     label: "",
     image: "/images/map/okimono/ie.png",
@@ -105,17 +107,13 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionWidthTiles: 6,
     collisionHeightTiles: 3,
     interactionX: 6,
-    interactionY: 24,
+    interactionY: 23,
     teachesWord: { kana: "かぜ", kanji: "風" },
     dialogue: [
       "旅人風の村人が窓辺に立って、外を見つめている。",
       "コト「気持ちよさそうな風……これは『かぜ』っていう言霊だよ！」",
     ],
   },
-  // 宿屋・武器屋：frontend/DESIGN.md 7.1節の第1章マップ構成「宿屋・武器屋・長老の家・井戸」に
-  // 合わせて、以前は空き家だった建物2つをそれぞれ差し替えた。ショップ機能（回復・購入等）は
-  // まだ実装していないので、今は建物として存在するだけの地の文にとどめている
-  // （2章「砂漠の町」でショップ・通貨システムを実装するときに、ここも中身を作り込む）
   {
     id: "house-inn",
     x: 14,
@@ -131,8 +129,11 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     interactionY: 14,
     dialogue: ["宿屋のようだ。今はまだ誰もいない。", "コト「泊まれるようになるのは、もう少し先みたいだね。」"],
   },
+  // 武器屋ではなく雑貨屋にした（装備は防具だけを扱う想定。武器はここでは売らない）。
+  // 中身（実際に買い物ができる機能）はまだ実装していないので、1章の他の店と同じく
+  // 「まだ開いていない」トーンの地の文にとどめている
   {
-    id: "house-weapon-shop",
+    id: "house-zakka-ya",
     x: 33,
     y: 24,
     kind: "npc",
@@ -144,8 +145,13 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 32,
     interactionY: 24,
-    dialogue: ["武器屋のようだ。棚はまだ空っぽだ。", "コト「装備を買えるお店は、また今度みたいだね。」"],
+    dialogue: [
+      "雑貨屋のようだ。防具だけを扱っているらしい。",
+      "コト「武器はここでは売ってないんだね。防具は買えるようになるかも？」",
+    ],
   },
+  // 誰もいない家3軒は、以前は「住人は村のどこかを歩き回っているらしい」という
+  // 説明だったが、鍵がかかっていて中に入れない、という自然な理由に変更した
   {
     id: "house-sw",
     x: 8,
@@ -159,7 +165,7 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 7,
     interactionY: 32,
-    dialogue: ["誰もいないようだ。住人は村のどこかを歩き回っているらしい。"],
+    dialogue: ["鍵のかかった家だ。中には入れないようだ。"],
   },
   {
     id: "house-s",
@@ -174,7 +180,7 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 17,
     interactionY: 32,
-    dialogue: ["誰もいないようだ。住人は村のどこかを歩き回っているらしい。"],
+    dialogue: ["鍵のかかった家だ。中には入れないようだ。"],
   },
   {
     id: "house-se",
@@ -189,19 +195,18 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     collisionHeightTiles: 3,
     interactionX: 33,
     interactionY: 33,
-    dialogue: ["誰もいないようだ。住人は村のどこかを歩き回っているらしい。"],
+    dialogue: ["鍵のかかった家だ。中には入れないようだ。"],
   },
+  // 池。以前は「小さな魚が泳いでいる」という一文があったが、まだ「さかな」という
+  // 言葉を手に入れる手段が無いので、今は水面があるだけの説明にとどめている。
+  // 「さかな」の言葉を実装したら、ここに魚が住み着いている描写を足すこと
   {
     id: "pond",
     x: 5,
     y: 8,
     kind: "object",
     label: "",
-    // imageは持たない（見た目は床レイヤーの水面テクスチャで表現する）が、
-    // widthTiles/heightTilesだけ指定して、水面の範囲に入れないようにする
-    widthTiles: 5,
-    heightTiles: 3,
-    dialogue: ["澄んだ池だ。小さな魚が泳いでいる。"],
+    dialogue: ["澄んだ池だ。水面が静かに揺れている。"],
   },
   {
     id: "cave",
@@ -212,19 +217,34 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     image: "/images/map/okimono/doukutu.png",
     widthTiles: 7,
     heightTiles: 7,
-    // 洞窟自体は謎の力にふさがれていて、いずれ後の章で開放する予定の伏線。
-    // コトが直接止めてくれることで、単なる「入れません」の壁ではなく
-    // 物語上の理由がある演出にしている（getPortraitsForInteractableで
-    // 主人公・コトの立ち絵を出す）
     dialogue: [
       "紫色の岩でできた、不気味な洞窟の入り口だ。",
+      "中は暗すぎて、とても入っていけそうにない。",
       "岩の隙間から、禍々しい力が漏れ出しているのが分かる。",
       "コト「待って！　今の私たちじゃ、まだこの力には勝てない。」",
       "コト「もっと言葉を集めて、力をつけてから来よう。」",
     ],
   },
+  // 洞窟の入り口は2マス分あるが、以前は右側（41,8）でしか会話が起きなかった。
+  // 左側（42,8）でも同じ会話ができるよう、見た目を持たない透明なぶつかり判定として追加した
   {
-    id: "town-exit",
+    id: "cave-left",
+    x: 42,
+    y: 8,
+    kind: "object",
+    label: "",
+    dialogue: [
+      "紫色の岩でできた、不気味な洞窟の入り口だ。",
+      "中は暗すぎて、とても入っていけそうにない。",
+      "岩の隙間から、禍々しい力が漏れ出しているのが分かる。",
+      "コト「待って！　今の私たちじゃ、まだこの力には勝てない。」",
+      "コト「もっと言葉を集めて、力をつけてから来よう。」",
+    ],
+  },
+  // 村の門。以前は1か所だけだったが、「出られない場所ができないように」横一列3か所に
+  // 増やした（22,23,24の3マス、いずれも草原へ出る）
+  {
+    id: "town-exit-1",
     x: 22,
     y: 42,
     kind: "exit",
@@ -232,28 +252,63 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     exitsTo: "field",
     dialogue: ["村の門をくぐり、草原の外へ出た。"],
   },
-  // 謎の青年。村人なのに、なぜか昔の言葉を知っている。動き回らず村の門の近くに
-  // ずっと立っていて、まるで主人公を見守っているかのように話しかけてくる
+  {
+    id: "town-exit-2",
+    x: 23,
+    y: 42,
+    kind: "exit",
+    label: "",
+    exitsTo: "field",
+    dialogue: ["村の門をくぐり、草原の外へ出た。"],
+  },
+  {
+    id: "town-exit-3",
+    x: 24,
+    y: 42,
+    kind: "exit",
+    label: "",
+    exitsTo: "field",
+    dialogue: ["村の門をくぐり、草原の外へ出た。"],
+  },
+  // 謎の青年。以前は木の裏に隠れて見えにくい位置にいたので、開けた場所へ移動した。
+  // 会話の最後に、コトが「なぜこの人だけ普通に喋れるんだろう」と不思議がる一言を追加した
+  // （この世界の村人は「う、う……」としか喋れないという設定と対比させる伏線）
   {
     id: "stranger",
-    x: 26,
+    x: 25,
     y: 38,
     kind: "npc",
     label: "👤",
-    // 顔を隠したフード姿（syoutai=正体 版ではなくnumei=不明 版）。
-    // 会話用の立ち絵（StoryGame.tsxのSTRANGER_PORTRAIT_IMAGE）も同じ「不明」の
-    // 方にそろえてあるので、マップと会話で見た目が食い違わない
     image: "/images/map/mura/nazosyounennumei.png",
     widthTiles: 1,
     heightTiles: 1,
-    dialogue: ["旅人風の青年が、静かにこちらを見ている。", "青年「旅は楽しい？」", "青年「焦らなくていい。君なら大丈夫。」"],
+    dialogue: [
+      "旅人風の青年が、静かにこちらを見ている。",
+      "青年「旅は楽しい？」",
+      "青年「焦らなくていい。君なら大丈夫。」",
+      "コト「あれ、あの人……なんでちゃんと喋れているんだろう……？」",
+    ],
+  },
+  // すごく眠そうな村人。目の下に濃いクマができている。
+  // 2章で「ねる」という言葉を覚えると、この人の様子が変化する予定（今はまだ未実装）
+  {
+    id: "sleepy-villager",
+    x: 25,
+    y: 23,
+    kind: "npc",
+    label: "🧑",
+    image: "/images/map/mura/murabito2.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: [
+      "村人が、目の下に濃いクマを作ってふらふらと立っている。",
+      "村人「……ふわぁ……（ぜんぜん眠れていないみたいだ）」",
+    ],
   },
   // 樽。中身に「攻撃力の書」「防御力の書」「体力の書」のどれが入っているかを
-  // grantsItemで指定する（中身の説明はここではなく、実際に手に入れたときの
-  // メッセージをStoryGame.tsxが組み立てる。同じ樽からは一度しかもらえない）。
-  // 見た目は樽だが、内部の状態名（openChest/chestsOpened等）は元の「宝箱」の
-  // ままにしてある。プレイヤーに見える部分だけ樽の演出に差し替えている。
-  // それぞれ近くの家の脇に置いてある（以前は家から離れた変な場所にあった）
+  // grantsItemで指定する。今回、樽の数を10個に増やしたのに合わせて、
+  // 全部に何か入っているわけではなく、空っぽの樽も混ぜてある
+  // （空っぽの樽はgrantsItemを指定せず、地の文だけで完結させている）
   {
     id: "barrel-1",
     x: 23,
@@ -268,8 +323,20 @@ export const TOWN_INTERACTABLES: Interactable[] = [
   },
   {
     id: "barrel-2",
-    x: 8,
-    y: 25,
+    x: 27,
+    y: 13,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    grantsItem: "hp",
+    dialogue: ["家のそばに、しっかりした樽が置いてある。", "コト「開けてみるね……」"],
+  },
+  {
+    id: "barrel-3",
+    x: 15,
+    y: 32,
     kind: "object",
     label: "",
     image: "/images/map/okimono/taru.png",
@@ -279,33 +346,109 @@ export const TOWN_INTERACTABLES: Interactable[] = [
     dialogue: ["家の裏に、苔むした樽が置いてある。", "コト「開けてみるね……」"],
   },
   {
-    id: "barrel-3",
-    x: 31,
-    y: 14,
+    id: "barrel-empty-1",
+    x: 15,
+    y: 15,
     kind: "object",
     label: "",
     image: "/images/map/okimono/taru.png",
     widthTiles: 1,
     heightTiles: 1,
-    grantsItem: "hp",
-    dialogue: ["家のそばに、しっかりした樽が置いてある。", "コト「開けてみるね……」"],
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
   },
-  // 木・草。井戸と同じく、専用の画像は置かずコトが教えてくれるだけの
-  // シンプルな発見スポット（widthTiles/heightTilesを持たないので当たり判定には
-  // 影響しない。既にある木・花壇の近くに置いてある）
   {
-    id: "tree-word",
-    x: 17,
-    y: 5,
+    id: "barrel-empty-2",
+    x: 27,
+    y: 12,
     kind: "object",
-    label: "🌳",
-    teachesWord: { kana: "き", kanji: "木" },
-    dialogue: ["大きな木が影を作っている。", "コト「大きな木……これは『き』っていう言霊だよ！」"],
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
   },
-  // 花壇（見た目はTOWN_OBJECTSにあった置物と同じkadan.png）。以前は花壇と無関係の
-  // 見えないマスで「はな」を教えていたが、実際に花壇にぶつかったときに教える形に変更した。
-  // コトに出会った直後、最初に案内される場所でもあるので（TUTORIAL_START_POS参照）、
-  // 「言葉を見つける」というゲームの基本操作をここで説明する役目も持たせている
+  {
+    id: "barrel-empty-3",
+    x: 30,
+    y: 22,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
+  },
+  {
+    id: "barrel-empty-4",
+    x: 30,
+    y: 23,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
+  },
+  {
+    id: "barrel-empty-5",
+    x: 30,
+    y: 24,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
+  },
+  {
+    id: "barrel-empty-6",
+    x: 31,
+    y: 33,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
+  },
+  {
+    id: "barrel-empty-7",
+    x: 9,
+    y: 33,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/taru.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    dialogue: ["古い樽が置いてある。", "コト「開けてみるね……」", "コト「あ、空っぽだ。」"],
+  },
+  // 長老の家の裏の宝箱。ポーション2個をまとめて手に入れられる
+  // （grantsItemCount参照）。中に小銭も入っている描写だけは入れてあるが、
+  // 通貨（ゴールド）自体はまだ実装していないので、実際には何も加算されない
+  // （2章でショップ・通貨システムを実装するときに、ここも実際に使えるお金にする）。
+  // 座標はTOWN_OBJECTSの宝箱の見た目（旧chest-279、置物としては重複するので
+  // そちらは削除した）と同じ位置に合わせてある
+  {
+    id: "elder-treasure",
+    x: 23,
+    y: 3,
+    kind: "object",
+    label: "",
+    image: "/images/map/okimono/takarabako.png",
+    widthTiles: 1,
+    heightTiles: 1,
+    grantsItem: "potion",
+    grantsItemCount: 2,
+    dialogue: [
+      "長老の家の裏に、古びた宝箱を見つけた。",
+      "コト「中に小銭も入ってるね。今はまだ使い道が無さそうだけど……」",
+      "コト「開けてみるね……」",
+    ],
+  },
+  // 花壇。コトに出会った直後、最初に案内される場所（TUTORIAL_START_POS参照）で、
+  // 「言葉集め」の基本操作をここで説明する役目も持たせている。
+  // 「はな」を覚えた後、村を出るには『はな』以外の言葉があと3つ必要、という
+  // 新しいルールの説明も付け加えた
   {
     id: "flowerbed-elder",
     x: 27,
@@ -321,16 +464,67 @@ export const TOWN_INTERACTABLES: Interactable[] = [
       "コト「きれいな花……これは『はな』っていう言霊だよ！」",
       "コト「これが『言葉集め』の基本だよ。物に近づいてぶつかると、思い出せる言葉が見つかるんだ。」",
       "コト「同じように、いろんな物に触れて言葉を探してみてね！」",
+      "コト「『はな』のほかにも、あと3つくらい言葉を集めてみよう！」",
     ],
   },
+  // 中央広場の木4本。どれか1本に触れると「き」を覚える。会話イベントの後は、
+  // 木の幹の位置がそのまま「ぶつかると同じ会話を繰り返すだけの壁」になる
+  // （家のドアと同じ、床を1マスだけ残して周りを壁にする仕組み。実際の壁化は
+  // buildTownTiles側で行っている）。dialogue自体は毎回同じ文章でよく、
+  // 初めて触れたときだけ自動で「『木（き）』をおぼえた！」の1行が追加される
   {
-    id: "grass-word",
-    x: 12,
+    id: "plaza-tree-1",
+    x: 19,
     y: 20,
     kind: "object",
-    label: "🌿",
-    teachesWord: { kana: "くさ", kanji: "草" },
-    dialogue: ["風にそよぐ草むらだ。", "コト「やわらかい草……これは『くさ』っていう言霊だよ！」"],
+    label: "",
+    teachesWord: { kana: "き", kanji: "木" },
+    dialogue: ["大きな木に触れた。", "コト「木だね！」"],
+  },
+  {
+    id: "plaza-tree-2",
+    x: 27,
+    y: 20,
+    kind: "object",
+    label: "",
+    teachesWord: { kana: "き", kanji: "木" },
+    dialogue: ["大きな木に触れた。", "コト「木だね！」"],
+  },
+  {
+    id: "plaza-tree-3",
+    x: 19,
+    y: 27,
+    kind: "object",
+    label: "",
+    teachesWord: { kana: "き", kanji: "木" },
+    dialogue: ["大きな木に触れた。", "コト「木だね！」"],
+  },
+  {
+    id: "plaza-tree-4",
+    x: 27,
+    y: 27,
+    kind: "object",
+    label: "",
+    teachesWord: { kana: "き", kanji: "木" },
+    dialogue: ["大きな木に触れた。", "コト「木だね！」"],
+  },
+  // 右上の石の山（TOWN_OBJECTSのstone-301〜320）。以前は当たり判定が無く
+  // 素通りできてしまっていたのを、applyStonePileCollisionで壁にした
+  // （STONE_PILE_INTERACTION_POINT参照）。「いし」を覚えつつ、将来
+  // 「石を砕くとお金が出る」ギミック（TOWN_OBJECTS冒頭のコメント参照）の伏線となる
+  // 一言を添えてある
+  {
+    id: "stone-pile",
+    x: 33, // STONE_PILE_INTERACTION_POINTと同じ座標（定義順の都合でここでは直接数値を書いている）
+    y: 5,
+    kind: "object",
+    label: "",
+    teachesWord: { kana: "いし", kanji: "石" },
+    dialogue: [
+      "大きな石がいくつも積み重なっている。",
+      "コト「これは『いし』っていう言霊だね！」",
+      "コト「叩いてみると、何か壊せそうな手応えがあるよ……」",
+    ],
   },
 ];
 
@@ -341,15 +535,9 @@ export const TOWN_INTERACTABLES: Interactable[] = [
 // spawnX, spawnYを中心にwanderRadiusマス以内をランダムに歩き回る
 // （実際の移動処理はuseWanderers.ts）。話しかける（ぶつかる）と
 // dialogueが表示されるのはTOWN_INTERACTABLESと同じ。
-// 家の住人だった5人の村人は、家の中で待つのではなく家のまわりを
-// 歩き回るようにしてある（家自体にはもう誰もいない）。
 //
-// マップ用のimageは、会話用の立ち絵（StoryGame.tsxのVILLAGER_PORTRAIT_IMAGES）と
-// 同一人物になるように選んである。mura/murabito1.png（お年寄りの農夫風）は、
-// 対応する会話用の絵が無い（kaiwaのmurabito1/2は長老専用のおばあさん）ため、
-// 歩き回る村人には使っていない。実際に使っているのは
-// mura/murabito2.png（ひげの職人風）とmura/murabito3.png（少年風）の2人だけで、
-// 同じ人物が村のあちこちに複数人いる体にしてある
+// マップを作り直した後も、全員の出発位置（spawnX/Y）は新しいマップ上で
+// 歩ける場所であることを確認済みなので、変更していない。
 export const TOWN_WANDERERS: WandererDefinition[] = [
   {
     id: "wanderer-nw",
@@ -443,9 +631,6 @@ export const TOWN_WANDERERS: WandererDefinition[] = [
       "コト「わんわん！ これは『いぬ』っていう言霊だよ！」",
     ],
   },
-  // ポーションをくれる村人。他の村人と同じく歩き回るNPCにしてあり、
-  // 見た目も他の村人と同じ画像を使い回している。grantsItemは樽と同じ
-  // 仕組みをそのまま使うので、一度もらったら二度目は空振りになる
   {
     id: "wanderer-potion",
     spawnX: 33,
@@ -465,106 +650,210 @@ export const TOWN_WANDERERS: WandererDefinition[] = [
 ];
 
 // ============================================================
-// 見た目だけの置物（木・花・柵・石など）の置き方 ガイド
+// 見た目だけの置物（木・花・柵・石など）
 // ============================================================
-// ここは会話を持たない置物。x, yはその置物の「足元」のマス（下端中央がそのマスの
-// 下端中央に来るように自動で配置される）。widthTiles/heightTilesは見た目の大きさ
-// （マス単位）。画像は public/images/map/okimono/ 以下のファイルをそのまま指定できる。
+// 以前はscatterObjectsヘルパーで座標リストから量産していたが、マップエディタ
+// （/story/map-editor）で村を作り直したのに合わせて、エディタが書き出した
+// PlacedObject[]をそのまま貼り付ける方式に変えた（家・木・柵・石・花壇など
+// 全種類が混在した1つの配列になっている）。
 //
-// blocksMovement: true にすると、その置物の見た目の範囲が当たり判定でも壁として
-// 扱われる（木・柵・石・花壇のような「ぶつかる」もの用）。付けなければ花のように
-// 踏んで通り抜けられる飾りになる。
-//
-// 木のように「同じ画像・同じ大きさのものを大量に置きたい」場合は、
-// 下のscatterObjects関数を使うと、[x, y]の座標だけを並べればよくなります
-// （idや画像名・大きさを1個ずつ書かなくてよい）。
-function scatterObjects(
-  idPrefix: string,
-  image: string,
-  size: {
-    widthTiles: number;
-    heightTiles: number;
-    groundLevel?: boolean;
-    blocksMovement?: boolean;
-    collisionWidthTiles?: number;
-    collisionHeightTiles?: number;
-  },
-  positions: [number, number][]
-): PlacedObject[] {
-  return positions.map(([x, y], index) => ({
-    id: `${idPrefix}-${index}`,
-    image,
-    x,
-    y,
-    widthTiles: size.widthTiles,
-    heightTiles: size.heightTiles,
-    groundLevel: size.groundLevel,
-    blocksMovement: size.blocksMovement,
-    collisionWidthTiles: size.collisionWidthTiles,
-    collisionHeightTiles: size.collisionHeightTiles,
-  }));
-}
-
-// 木を置きたい場所。増やしたいときはこの配列に [x, y] を追加するだけでいい。
-// 北の境界沿い(y:2)と、南の境界沿い(y:39,41,43。中央の村の出口x:22周辺は開けてある)に配置済み。
-// 木の当たり判定は幹の部分（見た目の下側）だけで、てっぺん（見た目の上側）には無い
-// （下のTREE_SIZEのcollisionHeightTiles参照）。てっぺんの葉が主人公にかぶさる形に
-// なるので、木の裏側を歩いているように見える。
-const TREE_POSITIONS: [number, number][] = [
-  [0, 2], [2, 2], [4, 2], [6, 2], [8, 2], [10, 2], [12, 2], [14, 2],
-  [16, 2], [18, 2], [20, 2], [22, 2], [24, 2], [26, 2], [28, 2], [30, 2],
-  [32, 2], [34, 2], [36, 2], [38, 2], [40, 2], [42, 2], [44, 2], [46, 2],
-  [0, 44], [2, 44], [4, 44], [6, 44], [8, 44], [10, 44], [12, 44], [14, 44],
-  [16, 44], [18, 44], [20, 44], [26, 44], [28, 44], [30, 44], [32, 44], [34, 44],
-  [36, 44], [38, 44], [40, 44], [42, 44], [44, 44], [46, 44], [0, 42], [2, 42],
-  [4, 42], [6, 42], [8, 42], [10, 42], [12, 42], [14, 42], [16, 42], [18, 42],
-  [20, 42], [26, 42], [28, 42], [30, 42], [32, 42], [34, 42], [36, 42], [38, 42],
-  [40, 42], [42, 42], [44, 42], [46, 42], [2, 40], [4, 40], [6, 40],
-  [8, 40], [10, 40], [12, 40], [14, 40], [16, 40], [18, 40], [20, 40], [26, 40],
-  [28, 40], [30, 40], [32, 40], [34, 40], [36, 40], [38, 40], [40, 40], [42, 40],
-  [44, 40], [46, 40], [0, 4], [0, 6], [0, 8], [0, 10], [0, 12], [0, 14],
-  [0, 16], [0, 18], [0, 20], [0, 22], [0, 24], [0, 26], [0, 28], [0, 30],
-  [0, 32], [0, 34], [0, 36], [0, 38], [0, 40], [46, 4], [46, 6], [46, 8], [46, 10], [46, 12], [46, 14],
-  [46, 16], [46, 18], [46, 20], [46, 22], [46, 24], [46, 26], [46, 28], [46, 30],
-  [46, 32], [46, 34], [46, 36], [46, 38], [46, 40],
-];
-
-// 木（tree2.png、3x3マス）の共通サイズ。collisionHeightTilesをheightTilesより
-// 小さくして、見た目の一番上の段（てっぺん）だけ当たり判定を外している。
-const TREE_SIZE = { widthTiles: 3, heightTiles: 3, collisionHeightTiles: 2, blocksMovement: true };
-
-// 花（hana.png）を置きたい場所。花壇と違って背が低いので、GridExplorer.tsx側で
-// groundLevel: true にして常に主人公の背景（奥）に敷いている（主人公が花の上を
-// 歩いても不自然に隠れたりしない）。増やしたいときはこの配列に [x, y] を足すだけでいい。
-// 参考にした画像（village.png）のように、それぞれの家の近くに1〜2個ずつ散らしてある。
-const FLOWER_POSITIONS: [number, number][] = [
-  [18, 11], [26, 7], [25, 12], [4, 17], [8, 11],
-  [37, 22], [14, 30], [25, 28], [41, 27], [3, 6], [8, 6],
-];
-
-// 石（isi.png）を置きたい場所
-const STONE_POSITIONS: [number, number][] = [
-  [22, 29], [2, 9],
-];
-
-// 柵（saku.png）を置きたい場所。家の脇に添える飾りと、南の門の両脇に配置
-const FENCE_POSITIONS: [number, number][] = [
-  [17, 3], [26, 3], [34, 10], [3, 22], [18, 11],
-  [38, 21], [4, 29], [22, 29], [38, 26], [20, 41], [24, 41],
-];
-
-// 木（大きめのtree2.png）を、境界だけでなく家の近くにも点在させる
-const INNER_TREE_POSITIONS: [number, number][] = [
-  [17, 4], [35, 12], [2, 26], [19, 13], [3, 34], [21, 36],
-];
-
+// 右上（x35付近、y3〜7）に岩がまとまって置いてある場所があるのは意図的な配置。
+// 将来「岩を砕けるようになる」ギミックを実装したとき、砕くとお金がたまに出る
+// スポットにする予定（今はまだただの飾り）
 export const TOWN_OBJECTS: PlacedObject[] = [
-  ...scatterObjects("tree", "/images/map/okimono/tree2.png", TREE_SIZE, TREE_POSITIONS),
-  ...scatterObjects("inner-tree", "/images/map/okimono/tree2.png", TREE_SIZE, INNER_TREE_POSITIONS),
-  ...scatterObjects("flower", "/images/map/okimono/hana.png", { widthTiles: 2, heightTiles: 2, groundLevel: true }, FLOWER_POSITIONS),
-  ...scatterObjects("stone", "/images/map/okimono/isi.png", { widthTiles: 1, heightTiles: 1, blocksMovement: true }, STONE_POSITIONS),
-  ...scatterObjects("fence", "/images/map/okimono/saku.png", { widthTiles: 1, heightTiles: 1, blocksMovement: true }, FENCE_POSITIONS),
-  { id: "flowerbed-cave", image: "/images/map/okimono/kadan.png", x: 44, y: 11, widthTiles: 3, heightTiles: 2, blocksMovement: true },
+  { id: "tree-3", image: "/images/map/okimono/tree2.png", x: 0, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-5", image: "/images/map/okimono/tree2.png", x: 0, y: 4, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-6", image: "/images/map/okimono/tree2.png", x: 0, y: 6, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-7", image: "/images/map/okimono/tree2.png", x: 0, y: 8, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-8", image: "/images/map/okimono/tree2.png", x: 0, y: 10, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-9", image: "/images/map/okimono/tree2.png", x: 0, y: 12, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-10", image: "/images/map/okimono/tree2.png", x: 0, y: 14, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-11", image: "/images/map/okimono/tree2.png", x: 0, y: 16, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-12", image: "/images/map/okimono/tree2.png", x: 0, y: 18, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-13", image: "/images/map/okimono/tree2.png", x: 0, y: 20, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-14", image: "/images/map/okimono/tree2.png", x: 0, y: 22, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-15", image: "/images/map/okimono/tree2.png", x: 0, y: 24, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-16", image: "/images/map/okimono/tree2.png", x: 0, y: 26, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-17", image: "/images/map/okimono/tree2.png", x: 0, y: 28, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-18", image: "/images/map/okimono/tree2.png", x: 0, y: 30, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-19", image: "/images/map/okimono/tree2.png", x: 0, y: 32, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-20", image: "/images/map/okimono/tree2.png", x: 0, y: 34, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-21", image: "/images/map/okimono/tree2.png", x: 0, y: 36, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-22", image: "/images/map/okimono/tree2.png", x: 0, y: 38, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-63", image: "/images/map/okimono/tree2.png", x: 0, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-64", image: "/images/map/okimono/tree2.png", x: 2, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-66", image: "/images/map/okimono/tree2.png", x: 4, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-67", image: "/images/map/okimono/tree2.png", x: 0, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-68", image: "/images/map/okimono/tree2.png", x: 2, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-69", image: "/images/map/okimono/tree2.png", x: 4, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-70", image: "/images/map/okimono/tree2.png", x: 0, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-71", image: "/images/map/okimono/tree2.png", x: 2, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-72", image: "/images/map/okimono/tree2.png", x: 4, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-73", image: "/images/map/okimono/tree2.png", x: 6, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-74", image: "/images/map/okimono/tree2.png", x: 8, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-75", image: "/images/map/okimono/tree2.png", x: 10, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-81", image: "/images/map/okimono/tree2.png", x: 6, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-82", image: "/images/map/okimono/tree2.png", x: 8, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-83", image: "/images/map/okimono/tree2.png", x: 10, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-89", image: "/images/map/okimono/tree2.png", x: 6, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-90", image: "/images/map/okimono/tree2.png", x: 8, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-91", image: "/images/map/okimono/tree2.png", x: 10, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-98", image: "/images/map/okimono/tree2.png", x: 26, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-99", image: "/images/map/okimono/tree2.png", x: 28, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-100", image: "/images/map/okimono/tree2.png", x: 30, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-101", image: "/images/map/okimono/tree2.png", x: 32, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-102", image: "/images/map/okimono/tree2.png", x: 34, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-103", image: "/images/map/okimono/tree2.png", x: 36, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-104", image: "/images/map/okimono/tree2.png", x: 38, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-105", image: "/images/map/okimono/tree2.png", x: 40, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-106", image: "/images/map/okimono/tree2.png", x: 42, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-107", image: "/images/map/okimono/tree2.png", x: 44, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-109", image: "/images/map/okimono/tree2.png", x: 2, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-110", image: "/images/map/okimono/tree2.png", x: 4, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-111", image: "/images/map/okimono/tree2.png", x: 6, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-112", image: "/images/map/okimono/tree2.png", x: 8, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-113", image: "/images/map/okimono/tree2.png", x: 10, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-114", image: "/images/map/okimono/tree2.png", x: 12, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-115", image: "/images/map/okimono/tree2.png", x: 14, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-116", image: "/images/map/okimono/tree2.png", x: 16, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-117", image: "/images/map/okimono/tree2.png", x: 18, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-118", image: "/images/map/okimono/tree2.png", x: 20, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-119", image: "/images/map/okimono/tree2.png", x: 22, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-120", image: "/images/map/okimono/tree2.png", x: 24, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-121", image: "/images/map/okimono/tree2.png", x: 26, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-122", image: "/images/map/okimono/tree2.png", x: 28, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-123", image: "/images/map/okimono/tree2.png", x: 30, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-124", image: "/images/map/okimono/tree2.png", x: 32, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-125", image: "/images/map/okimono/tree2.png", x: 34, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-126", image: "/images/map/okimono/tree2.png", x: 36, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-127", image: "/images/map/okimono/tree2.png", x: 38, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-128", image: "/images/map/okimono/tree2.png", x: 40, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-129", image: "/images/map/okimono/tree2.png", x: 42, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-130", image: "/images/map/okimono/tree2.png", x: 44, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-131", image: "/images/map/okimono/tree2.png", x: 46, y: 2, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-132", image: "/images/map/okimono/tree2.png", x: 46, y: 4, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-133", image: "/images/map/okimono/tree2.png", x: 46, y: 6, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-134", image: "/images/map/okimono/tree2.png", x: 46, y: 8, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-152", image: "/images/map/okimono/tree2.png", x: 44, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-153", image: "/images/map/okimono/tree2.png", x: 42, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-154", image: "/images/map/okimono/tree2.png", x: 40, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-156", image: "/images/map/okimono/tree2.png", x: 38, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-157", image: "/images/map/okimono/tree2.png", x: 36, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-158", image: "/images/map/okimono/tree2.png", x: 34, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-159", image: "/images/map/okimono/tree2.png", x: 32, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-160", image: "/images/map/okimono/tree2.png", x: 30, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-161", image: "/images/map/okimono/tree2.png", x: 28, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-162", image: "/images/map/okimono/tree2.png", x: 26, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-163", image: "/images/map/okimono/tree2.png", x: 26, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-164", image: "/images/map/okimono/tree2.png", x: 28, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-165", image: "/images/map/okimono/tree2.png", x: 30, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-166", image: "/images/map/okimono/tree2.png", x: 32, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-167", image: "/images/map/okimono/tree2.png", x: 34, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-168", image: "/images/map/okimono/tree2.png", x: 36, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-169", image: "/images/map/okimono/tree2.png", x: 38, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-170", image: "/images/map/okimono/tree2.png", x: 40, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-171", image: "/images/map/okimono/tree2.png", x: 42, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-172", image: "/images/map/okimono/tree2.png", x: 44, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-199", image: "/images/map/okimono/tree2.png", x: 37, y: 3, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-200", image: "/images/map/okimono/tree2.png", x: 36, y: 4, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "barrel-201-deco", image: "/images/map/okimono/taru.png", x: 23, y: 8, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-202-deco", image: "/images/map/okimono/taru.png", x: 15, y: 15, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-203-deco", image: "/images/map/okimono/taru.png", x: 27, y: 12, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-204-deco", image: "/images/map/okimono/taru.png", x: 27, y: 13, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-205-deco", image: "/images/map/okimono/taru.png", x: 30, y: 22, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-206-deco", image: "/images/map/okimono/taru.png", x: 30, y: 23, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-207-deco", image: "/images/map/okimono/taru.png", x: 30, y: 24, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "house-213-deco", image: "/images/map/okimono/ie.png", x: 7, y: 23, widthTiles: 6, heightTiles: 6, blocksMovement: true, collisionHeightTiles: 3 },
+  { id: "barrel-214-deco", image: "/images/map/okimono/taru.png", x: 31, y: 33, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-218-deco", image: "/images/map/okimono/taru.png", x: 15, y: 32, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "barrel-221-deco", image: "/images/map/okimono/taru.png", x: 9, y: 33, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "flowerbed-223", image: "/images/map/okimono/kadan.png", x: 27, y: 6, widthTiles: 3, heightTiles: 2, blocksMovement: true },
+  { id: "fence-229", image: "/images/map/okimono/saku.png", x: 24, y: 39, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "fence-230", image: "/images/map/okimono/saku.png", x: 22, y: 39, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "flower-233", image: "/images/map/okimono/hana.png", x: 8, y: 6, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-234", image: "/images/map/okimono/hana.png", x: 3, y: 6, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "tree-239", image: "/images/map/okimono/tree2.png", x: 46, y: 10, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-241", image: "/images/map/okimono/tree2.png", x: 46, y: 12, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-242", image: "/images/map/okimono/tree2.png", x: 46, y: 14, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-243", image: "/images/map/okimono/tree2.png", x: 46, y: 16, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-244", image: "/images/map/okimono/tree2.png", x: 46, y: 18, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-246", image: "/images/map/okimono/tree2.png", x: 46, y: 20, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-247", image: "/images/map/okimono/tree2.png", x: 46, y: 22, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-248", image: "/images/map/okimono/tree2.png", x: 46, y: 24, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-249", image: "/images/map/okimono/tree2.png", x: 46, y: 26, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-250", image: "/images/map/okimono/tree2.png", x: 46, y: 28, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-251", image: "/images/map/okimono/tree2.png", x: 46, y: 30, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-252", image: "/images/map/okimono/tree2.png", x: 46, y: 32, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-253", image: "/images/map/okimono/tree2.png", x: 46, y: 34, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-254", image: "/images/map/okimono/tree2.png", x: 46, y: 36, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-255", image: "/images/map/okimono/tree2.png", x: 46, y: 38, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-257", image: "/images/map/okimono/tree2.png", x: 46, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-258", image: "/images/map/okimono/tree2.png", x: 46, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-260", image: "/images/map/okimono/tree2.png", x: 46, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "fence-261", image: "/images/map/okimono/saku.png", x: 5, y: 32, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "fence-262", image: "/images/map/okimono/saku.png", x: 4, y: 32, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "fence-263", image: "/images/map/okimono/saku.png", x: 3, y: 32, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "fence-264", image: "/images/map/okimono/saku.png", x: 2, y: 32, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "tree-268-deco", image: "/images/map/okimono/tree2.png", x: 19, y: 27, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-269-deco", image: "/images/map/okimono/tree2.png", x: 27, y: 27, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-270-deco", image: "/images/map/okimono/tree2.png", x: 27, y: 20, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "house-281-deco", image: "/images/map/okimono/ie.png", x: 22, y: 7, widthTiles: 6, heightTiles: 6, blocksMovement: true, collisionHeightTiles: 3 },
+  { id: "flower-282", image: "/images/map/okimono/hana.png", x: 17, y: 7, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-283", image: "/images/map/okimono/hana.png", x: 20, y: 13, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-284", image: "/images/map/okimono/hana.png", x: 6, y: 16, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-285", image: "/images/map/okimono/hana.png", x: 37, y: 16, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-286", image: "/images/map/okimono/hana.png", x: 42, y: 21, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-287", image: "/images/map/okimono/hana.png", x: 28, y: 31, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-288", image: "/images/map/okimono/hana.png", x: 13, y: 29, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-289", image: "/images/map/okimono/hana.png", x: 4, y: 30, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-290", image: "/images/map/okimono/hana.png", x: 42, y: 34, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "flower-293", image: "/images/map/okimono/hana.png", x: 12, y: 38, widthTiles: 2, heightTiles: 2, groundLevel: true },
+  { id: "tree-294", image: "/images/map/okimono/tree2.png", x: 12, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-296", image: "/images/map/okimono/tree2.png", x: 12, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-297", image: "/images/map/okimono/tree2.png", x: 12, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "fence-298", image: "/images/map/okimono/saku.png", x: 21, y: 20, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "tree-300-deco", image: "/images/map/okimono/tree2.png", x: 19, y: 20, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "stone-301", image: "/images/map/okimono/isi.png", x: 37, y: 6, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-303", image: "/images/map/okimono/isi.png", x: 36, y: 6, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-304", image: "/images/map/okimono/isi.png", x: 37, y: 5, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-305", image: "/images/map/okimono/isi.png", x: 36, y: 5, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-306", image: "/images/map/okimono/isi.png", x: 35, y: 5, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-307", image: "/images/map/okimono/isi.png", x: 35, y: 6, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-308", image: "/images/map/okimono/isi.png", x: 37, y: 7, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-309", image: "/images/map/okimono/isi.png", x: 36, y: 7, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-310", image: "/images/map/okimono/isi.png", x: 35, y: 7, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-311", image: "/images/map/okimono/isi.png", x: 34, y: 3, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-312", image: "/images/map/okimono/isi.png", x: 34, y: 4, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-313", image: "/images/map/okimono/isi.png", x: 34, y: 5, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-314", image: "/images/map/okimono/isi.png", x: 34, y: 6, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-315", image: "/images/map/okimono/isi.png", x: 34, y: 7, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-316", image: "/images/map/okimono/isi.png", x: 33, y: 7, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-317", image: "/images/map/okimono/isi.png", x: 33, y: 6, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-318", image: "/images/map/okimono/isi.png", x: 33, y: 5, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-319", image: "/images/map/okimono/isi.png", x: 33, y: 4, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "stone-320", image: "/images/map/okimono/isi.png", x: 33, y: 3, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "tree-321", image: "/images/map/okimono/tree2.png", x: 14, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-322", image: "/images/map/okimono/tree2.png", x: 14, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-323", image: "/images/map/okimono/tree2.png", x: 14, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-326", image: "/images/map/okimono/tree2.png", x: 16, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-327", image: "/images/map/okimono/tree2.png", x: 16, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-328", image: "/images/map/okimono/tree2.png", x: 16, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-329", image: "/images/map/okimono/tree2.png", x: 18, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-330", image: "/images/map/okimono/tree2.png", x: 18, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-331", image: "/images/map/okimono/tree2.png", x: 18, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-332", image: "/images/map/okimono/tree2.png", x: 20, y: 40, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-333", image: "/images/map/okimono/tree2.png", x: 20, y: 42, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-334", image: "/images/map/okimono/tree2.png", x: 20, y: 44, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-335", image: "/images/map/okimono/tree2.png", x: 40, y: 15, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-336", image: "/images/map/okimono/tree2.png", x: 37, y: 19, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-338", image: "/images/map/okimono/tree2.png", x: 33, y: 16, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-339", image: "/images/map/okimono/tree2.png", x: 43, y: 26, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "tree-341", image: "/images/map/okimono/tree2.png", x: 3, y: 13, widthTiles: 3, heightTiles: 3, blocksMovement: true, collisionHeightTiles: 2 },
+  { id: "fence-342", image: "/images/map/okimono/saku.png", x: 34, y: 13, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "fence-343", image: "/images/map/okimono/saku.png", x: 33, y: 13, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "house-344-deco", image: "/images/map/okimono/ie.png", x: 30, y: 13, widthTiles: 6, heightTiles: 6, blocksMovement: true, collisionHeightTiles: 3 },
+  { id: "fence-345", image: "/images/map/okimono/saku.png", x: 11, y: 14, widthTiles: 1, heightTiles: 1, blocksMovement: true },
+  { id: "flowerbed-346", image: "/images/map/okimono/kadan.png", x: 9, y: 14, widthTiles: 3, heightTiles: 2, blocksMovement: true },
 ];
 
 // 置物の見た目の範囲（マス目の矩形）を計算する。x, yは足元のマスなので、
@@ -575,74 +864,113 @@ function footprintOf(x: number, y: number, widthTiles: number, heightTiles: numb
   return { left, right: left + widthTiles, top, bottom: top + heightTiles };
 }
 
-// 村の当たり判定を、実際に置いてある家・木・柵・石・花壇の位置から自動計算する。
-// 「参考にする」対象を増減させたいときはTOWN_INTERACTABLES / TOWN_OBJECTS側を直せばよく、
-// このマス目データ自体を手で書き換える必要はない。
-function buildTownTiles(): GridMap["tiles"] {
-  const tiles: GridMap["tiles"] = Array.from({ length: TOWN_GRID_HEIGHT }, () =>
-    Array<GridMap["tiles"][number][number]>(TOWN_GRID_WIDTH).fill("floor")
-  );
+// 中央広場の木4本（TOWN_INTERACTABLESのplaza-tree-1〜4）の当たり判定を追加する。
+// 見た目は3x2（collisionHeightTiles:2）だが、幹の位置（x, y。＝インタラクタブルの
+// interactionポイント）だけは床のまま残し、周りだけ壁にする（家のドアと同じ仕組み）。
+// TOWN_OBJECTS側の対応する木（tree-268-deco等）と同じ座標・大きさを使っている
+const PLAZA_TREE_ANCHORS: [number, number][] = [
+  [19, 20],
+  [27, 20],
+  [19, 27],
+  [27, 27],
+];
 
-  const blockFootprint = (
-    x: number,
-    y: number,
-    widthTiles: number,
-    heightTiles: number,
-    keepCell?: { x: number; y: number }
-  ) => {
-    const fp = footprintOf(x, y, widthTiles, heightTiles);
+function applyPlazaTreeCollision(tiles: GridMap["tiles"]) {
+  for (const [x, y] of PLAZA_TREE_ANCHORS) {
+    const fp = footprintOf(x, y, 3, 2);
 
     for (let yy = fp.top; yy < fp.bottom; yy++) {
       for (let xx = fp.left; xx < fp.right; xx++) {
-        if (yy < 0 || yy >= TOWN_GRID_HEIGHT || xx < 0 || xx >= TOWN_GRID_WIDTH) continue;
-        if (keepCell && xx === keepCell.x && yy === keepCell.y) continue; // ここだけ床のまま残して会話にぶつかれるようにする
+        if (xx === x && yy === y) continue; // 幹の位置だけは床のまま残す
+        if (yy < 0 || yy >= tiles.length || xx < 0 || xx >= tiles[0].length) continue;
 
         tiles[yy][xx] = "wall";
       }
     }
-  };
-
-  // 家・井戸・洞窟・池：ぶつかり判定の基準点（interactionX/Y。無ければx, y）だけ
-  // 床を残し、それ以外の範囲（collisionWidthTiles/Heightsが無ければ見た目の
-  // widthTiles/heightTilesと同じ）を壁にする。imageが無いもの（池など）も対象。
-  // footprintOfは常に足元(x, y)を下端に揃えて計算するので、collisionHeightTilesを
-  // widthTiles/heightTilesより小さくするだけで、見た目の下側（壁がある部分）だけを
-  // 塞ぎ、上側（屋根の裏など何もない部分）は自動的に塞がれずに残る。
-  for (const interactable of TOWN_INTERACTABLES) {
-    const w = interactable.collisionWidthTiles ?? interactable.widthTiles;
-    const h = interactable.collisionHeightTiles ?? interactable.heightTiles;
-
-    if (!w || !h) continue;
-
-    const keepCell = {
-      x: interactable.interactionX ?? interactable.x,
-      y: interactable.interactionY ?? interactable.y,
-    };
-
-    blockFootprint(interactable.x, interactable.y, w, h, keepCell);
   }
+}
 
-  // 木・柵・石・花壇など、blocksMovement: true の置物は見た目の範囲を壁にする。
-  // collisionWidthTiles/collisionHeightTilesがあれば（木のてっぺんなど）それを優先し、
-  // 無ければ見た目の範囲（widthTiles/heightTiles）をまるごと壁にする
-  for (const object of TOWN_OBJECTS) {
-    if (!object.blocksMovement) continue;
+// 右上の石の山（TOWN_OBJECTSのstone-301〜320）。以前は見た目だけで当たり判定が
+// 無く、石の上を素通りできてしまっていた。石が積まれている範囲を丸ごと壁にし、
+// (33,5)だけ床のまま残して「いし」を覚える会話のぶつかり判定にする
+// （西側の開けた場所からしか近づけない配置なので、そちら側の1マスを残してある）
+const STONE_PILE_POSITIONS: [number, number][] = [
+  [37, 6], [36, 6], [37, 5], [36, 5], [35, 5], [35, 6], [37, 7], [36, 7], [35, 7],
+  [34, 3], [34, 4], [34, 5], [34, 6], [34, 7], [33, 7], [33, 6], [33, 5], [33, 4], [33, 3],
+];
+const STONE_PILE_INTERACTION_POINT: [number, number] = [33, 5];
 
-    const w = object.collisionWidthTiles ?? object.widthTiles;
-    const h = object.collisionHeightTiles ?? object.heightTiles;
+function applyStonePileCollision(tiles: GridMap["tiles"]) {
+  for (const [x, y] of STONE_PILE_POSITIONS) {
+    if (x === STONE_PILE_INTERACTION_POINT[0] && y === STONE_PILE_INTERACTION_POINT[1]) continue;
+    if (y < 0 || y >= tiles.length || x < 0 || x >= tiles[0].length) continue;
 
-    blockFootprint(object.x, object.y, w, h);
+    tiles[y][x] = "wall";
   }
+}
 
-  // 外周1マスは、木の隙間があっても外へ出られないように必ず壁にしておく安全策
-  for (let x = 0; x < TOWN_GRID_WIDTH; x++) {
-    tiles[0][x] = "wall";
-    tiles[TOWN_GRID_HEIGHT - 1][x] = "wall";
-  }
-  for (let y = 0; y < TOWN_GRID_HEIGHT; y++) {
-    tiles[y][0] = "wall";
-    tiles[y][TOWN_GRID_WIDTH - 1] = "wall";
-  }
+// ============================================================
+// 当たり判定（マップエディタで描いたASCII）
+// ============================================================
+// マップエディタ（/story/map-editor）で「壁の筆」を使って直接描いたもの。
+// '#' が壁、'.' が床（歩ける）。家のドアの位置には、エディタ上であらかじめ
+// 床の隙間を1マス残して描いてある（TOWN_INTERACTABLESのinteractionX/Yと対応）。
+//
+//              0         1         2         3         4
+//              0123456789012345678901234567890123456789012345678
+const TOWN_WALL_ROWS: string[] = [
+  "################################################",
+  "################################################",
+  "################################################",
+  "##................................##############",
+  "##................................##############",
+  "##..................#########.....##############",
+  "##.#####............#######.#.....##############",
+  "##.#####............#.####............##########",
+  "##.##.##..............................###..#####",
+  "##...........................................###",
+  "##...........................................###",
+  "##..........................######...........###",
+  "#####.......######..........######...........###",
+  "#####...###.######..........#.####...........###",
+  "##......#####.####.....................###...###",
+  "##..............................###....###...###",
+  "##..............................###..........###",
+  "##...........................................###",
+  "##..................................###......###",
+  "##..................................###......###",
+  "##...................#.......................###",
+  "##...######..................................###",
+  "##...######....................######........###",
+  "##...#.####...........###......######........###",
+  "##....................#.#......#.####........###",
+  "##........................................######",
+  "##........................................######",
+  "##...........................................###",
+  "##...........................................###",
+  "##...........................................###",
+  "##....######....######.......................###",
+  "##....######....######..........######.......###",
+  "#######.####....#.####..........######.......###",
+  "##..............................#.####.......###",
+  "##...........................................###",
+  "##...........................................###",
+  "##...........................................###",
+  "##...........................................###",
+  "##...........................................###",
+  "#######################.########################",
+  "######################...#######################",
+  "######################...#######################",
+  "######################...#######################",
+  "################################################",
+  "################################################",
+];
+
+function buildTownTiles(): GridMap["tiles"] {
+  const tiles = parseWallRows(TOWN_WALL_ROWS, TOWN_GRID_HEIGHT, TOWN_GRID_WIDTH, "TOWN_WALL_ROWS");
+
+  applyPlazaTreeCollision(tiles);
+  applyStonePileCollision(tiles);
 
   return tiles;
 }
@@ -650,10 +978,7 @@ function buildTownTiles(): GridMap["tiles"] {
 // ============================================================
 // 床の見た目（草・土の道・水面）
 // ============================================================
-// 当たり判定とは別に「どの床画像を敷くか」だけを決めるデータ。歩けるかどうかには
-// 関係しない（土の道の外を歩いても、水面の上を歩いても、当たり判定的には問題ない）。
-// 見た目だけの問題なので、以前のように道を自動計算するのではなく、下のASCIIマップ
-// (TOWN_FLOOR_ROWS)を直接書き換える方式にしてある。1文字が1マスに対応していて、
+// マップエディタで「床の筆」を使って描いたもの。1文字が1マスに対応していて、
 // 見たままの形がゲーム内の道の形になる。
 //
 // 使える文字（他の文字を使うと開発時にエラーで教えてくれる）:
@@ -661,10 +986,7 @@ function buildTownTiles(): GridMap["tiles"] {
 //   #  土の道
 //   ~  水面
 //
-// 1行が48文字（TOWN_GRID_WIDTH）、44行（TOWN_GRID_HEIGHT）ちょうどである必要がある。
-// 下のルーラー（列番号の目安）と、TOWN_INTERACTABLES / TOWN_OBJECTSに書いてある
-// x, y座標を見比べながら編集するとよい（例: house-elderはx:22, y:7辺りにあるので、
-// 22列目・7行目あたりに道を通したいならそのあたりの'.'を'#'に変える）。
+// 1行が48文字（TOWN_GRID_WIDTH）、45行（TOWN_GRID_HEIGHT）ちょうどである必要がある。
 //
 //              0         1         2         3         4
 //              0123456789012345678901234567890123456789012345678
@@ -680,39 +1002,40 @@ const TOWN_FLOOR_ROWS: string[] = [
   "...~~~~~............#####.......................",
   ".....######################################.....",
   ".....######################################.....",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................#######..................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................########..................",
   ".............#################..................",
   ".............############.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".....................######.....................",
-  ".....................######.....................",
-  ".....................######.....................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "....................#######.....................",
+  "....................#######.....................",
+  "....................#######.....................",
   "......#####################.....................",
   "......###############################...........",
-  ".....................#################..........",
-  ".......................##...........###.........",
-  ".......................##............###........",
-  ".......................##.............##........",
-  ".......................##.............##........",
-  ".......................##.............##........",
-  ".......................##.............##........",
+  "....................##################..........",
+  "......................###...........###.........",
+  "......................###............###........",
+  "......................###.............##........",
+  "......................###.............##........",
+  "......................###.............##........",
+  "......................###.............##........",
   ".......##################............###........",
   ".......################################.........",
-  ".......................###############..........",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
-  ".......................##.......................",
+  "......................################..........",
   "......................###.......................",
-  "......................##........................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
+  "......................###.......................",
 ];
 
 const FLOOR_CHAR_MAP: Record<string, FloorTileType> = {
@@ -798,9 +1121,14 @@ export const FIELD_TOWN_ENTRANCE: Interactable = {
   dialogue: ["村の門をくぐり、中へ戻った。"],
 };
 
-// frontend/DESIGN.md 7.1節の第1章マップ構成「草原→スライムの丘→スライムキング」に
-// 合わせて、ボスの足止めセリフで地名（スライムの丘）を紹介している
-export const FIELD_BOSS: Interactable = {
+// 修正済み：以前はここ（スライムの丘）に実際にキングスライムが立っていて、
+// フィールドを歩いていて何も知らずに本番のボス戦へ突入してしまう作りだった。
+// 今は村の門を出た瞬間に戦闘チュートリアルとしてキングスライム戦が始まる方式に
+// 変えた（StoryGame.tsxのhandleBump、kind:"exit"の分岐参照）ので、この
+// インタラクタブル自体はFIELD_INTERACTABLESに含めていない（walkして触れることはない）。
+// ただし「スライムの丘」という地名・座標は、道や岩地の見た目を計算するのに
+// まだ使っているので、データ自体は残してある
+const FIELD_BOSS: Interactable = {
   id: "slime-king",
   x: 32,
   y: 24,
@@ -825,10 +1153,13 @@ export const FIELD_BOSS: Interactable = {
 // IDの場所に本物の入り口を差し替えればよい
 export const FIELD_LANDMARKS: Interactable[] = [
   {
+    // 修正済み：以前はkind:"object"で「今はまだ入れない」と止められるだけの
+    // 目印だったが、1章クリア後は実際に2章「砂漠の町」へ入れるようにした
     id: "desert-town-entrance",
     x: 12,
     y: 16,
-    kind: "object",
+    kind: "exit",
+    exitsTo: "desertTown",
     label: "",
     image: "/images/map/okimono/tileset/castle_desert_town.png",
     widthTiles: 1,
@@ -836,7 +1167,7 @@ export const FIELD_LANDMARKS: Interactable[] = [
     dialogue: [
       "大陸の西に、砂に埋もれかけた町の城壁が見える。",
       "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
-      "コト「今はまだ、足を踏み入れないほうがよさそうだね。」",
+      "コト「入ってみよう！」",
     ],
   },
   {
@@ -853,7 +1184,9 @@ export const FIELD_LANDMARKS: Interactable[] = [
   },
 ];
 
-export const FIELD_INTERACTABLES: Interactable[] = [FIELD_TOWN_ENTRANCE, FIELD_BOSS, ...FIELD_LANDMARKS];
+// FIELD_BOSSは含めない（上のコメント参照。キングスライムは村の門でのチュートリアル
+// 戦闘としてのみ戦う。フィールド上に実際に立たせて触れられるようにはしていない）
+export const FIELD_INTERACTABLES: Interactable[] = [FIELD_TOWN_ENTRANCE, ...FIELD_LANDMARKS];
 
 // 大陸のあちこちに単発の木・岩を点在させて、ただの空き地ではなく探索しがいの
 // ある地形に見えるようにしてある。フィールドは村よりマス目1つが大きいので、
@@ -892,6 +1225,34 @@ const FOREST_RING: [number, number][] = [
   [54, 11], [54, 12], [54, 13],
   [50, 14], [51, 14], [52, 14], [53, 14], [54, 14],
 ];
+
+// 同じ画像・同じ大きさの置物を、座標のリストだけで量産するヘルパー
+function scatterObjects(
+  idPrefix: string,
+  image: string,
+  size: {
+    widthTiles: number;
+    heightTiles: number;
+    groundLevel?: boolean;
+    blocksMovement?: boolean;
+    collisionWidthTiles?: number;
+    collisionHeightTiles?: number;
+  },
+  positions: [number, number][]
+): PlacedObject[] {
+  return positions.map(([x, y], index) => ({
+    id: `${idPrefix}-${index}`,
+    image,
+    x,
+    y,
+    widthTiles: size.widthTiles,
+    heightTiles: size.heightTiles,
+    groundLevel: size.groundLevel,
+    blocksMovement: size.blocksMovement,
+    collisionWidthTiles: size.collisionWidthTiles,
+    collisionHeightTiles: size.collisionHeightTiles,
+  }));
+}
 
 // リングを構成する1マスずつに、切り出した9枚の中から順番に別の絵をあてて、
 // 単調な繰り返しに見えないようにする（同じ絵が並ばないようにするための工夫）
@@ -1005,29 +1366,18 @@ export type CollectibleWord = {
   kanji: string;
   // どこで手に入るかのヒント（一覧画面でまだ持っていない単語のヒントとして表示する）
   hint: string;
-  // trueだとボス解放に必要な必須の言葉、無ければ（false/省略）ボーナスの言葉。
-  // ボス解放の判定はBOSS_UNLOCK_WORD_COUNTの数と単純比較するのではなく、
-  // 必須の言葉を何個覚えたかで判定する（ボーナスの言葉を覚えただけでは解放されない）。
-  // 「ゆうき」はボスを倒した報酬として後から手に入る言葉なので、これ自体は
-  // ボス解放の条件には含めない（含めると「ボスを倒さないと手に入らない言葉が
-  // ボスを倒す条件になる」という矛盾が起きるため）
-  required?: boolean;
 };
 
 export const CHAPTER1_WORD_DICTIONARY: CollectibleWord[] = [
-  { kana: "みず", kanji: "水", hint: "村の広場の井戸", required: true },
-  { kana: "ひ", kanji: "火", hint: "暖炉のある家", required: true },
-  { kana: "かぜ", kanji: "風", hint: "旅人風の村人がいる家", required: true },
+  { kana: "みず", kanji: "水", hint: "村の広場の井戸" },
+  { kana: "ひ", kanji: "火", hint: "暖炉のある家" },
+  { kana: "かぜ", kanji: "風", hint: "旅人風の村人がいる家" },
   { kana: "ねこ", kanji: "猫", hint: "村を歩き回る猫" },
   { kana: "いぬ", kanji: "犬", hint: "村を歩き回る犬" },
-  { kana: "き", kanji: "木", hint: "村の大きな木のそば" },
+  { kana: "き", kanji: "木", hint: "村の中央広場の木" },
+  { kana: "いし", kanji: "石", hint: "村の北東に積まれた石の山" },
   { kana: "はな", kanji: "花", hint: "村に咲いている花" },
-  { kana: "くさ", kanji: "草", hint: "生い茂った草むら" },
+  { kana: "くさ", kanji: "草", hint: "生い茂った草むら（未実装）" },
   { kana: "ゆうき", kanji: "勇気", hint: "スライムキングを倒す" },
+  { kana: "もり", kanji: "森", hint: "砂漠の町の旅人" },
 ];
-
-// ボス解放に必要な言葉（kana）の一覧。CHAPTER1_WORD_DICTIONARYから自動で作るので、
-// 必須の言葉を増減させたいときはrequiredフラグを直すだけでよい
-export const CHAPTER1_REQUIRED_WORDS: string[] = CHAPTER1_WORD_DICTIONARY.filter(
-  (word) => word.required
-).map((word) => word.kana);

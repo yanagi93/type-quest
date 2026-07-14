@@ -169,6 +169,12 @@ export default function BattlePage() {
   const mode = searchParams.get("mode") || "practice";
   const encounter = searchParams.get("encounter") || "";
   const learnedWords = searchParams.get("words") || "";
+  // 村の門を通るときの、キングスライムとのチュートリアル戦かどうか
+  // （StoryGame.tsxのtown-exitから&tutorial=1付きで飛んでくる）
+  const isTutorial = searchParams.get("tutorial") === "1";
+  // どの章のボスと戦っているか（StoryGame.tsxの&chapter=をそのまま受け取る）。
+  // 勝った場合、この番号をそのままStoryBattleResultへ渡し、次の章へ進める材料にする
+  const chapter = Number(searchParams.get("chapter") || "0") || undefined;
   // ストーリーモードで町の宝箱から手に入れた「攻撃力の書」「防御力の書」の数。
   // ボス戦にだけ、開始時点の強化として引き継がれる
   const attackBooks = Number(searchParams.get("attackBooks") || "0");
@@ -191,6 +197,8 @@ export default function BattlePage() {
       defenseBooks={defenseBooks}
       initialHp={initialHp}
       initialMaxHp={initialMaxHp}
+      isTutorial={isTutorial}
+      chapter={chapter}
     />
   );
 }
@@ -204,6 +212,8 @@ function BattleGame({
   defenseBooks,
   initialHp,
   initialMaxHp,
+  isTutorial,
+  chapter,
 }: {
   level: string;
   mode: string;
@@ -213,6 +223,8 @@ function BattleGame({
   defenseBooks: number;
   initialHp: number;
   initialMaxHp: number;
+  isTutorial: boolean;
+  chapter?: number;
 }) {
   // ストーリーモード（試練の塔とは別の、章仕立ての戦闘）かどうか
   const isStory = mode === "story";
@@ -260,6 +272,13 @@ function BattleGame({
   // refの中身を描画中に直接読むとReactのlintルールに引っかかる（refはレンダーの
   // 外で読む前提のため）ので、勝利が決まった瞬間にstateへコピーしておく
   const [battleLearnedWordsSnapshot, setBattleLearnedWordsSnapshot] = useState<string[]>([]);
+
+  // チュートリアル戦（isTutorial）でだけ使う、コトの説明ポップアップ。
+  // Enterが押されるまでゲームを止める（treasureMessage等と同じ扱い。isPaused参照）。
+  // attack（自分の攻撃＝白い文字の説明）とdefense（相手の攻撃＝黒い文字の説明）の
+  // 2段階があり、それぞれ一度しか出さないのでshownRefで管理する
+  const [tutorialMessage, setTutorialMessage] = useState<string[] | null>(null);
+  const tutorialShownRef = useRef({ attack: false, defense: false });
 
   // ターン制の進行管理
   const [phase, setPhase] = useState<Phase>("playerAttack");
@@ -545,8 +564,34 @@ function BattleGame({
     setCurrentKana(word.kana);
     setCurrentKanji(word.kanji);
     setUnits(buildWordUnits(word.kana));
+
+    // チュートリアル戦は、単語が流れ始める前に「白い文字＝自分の攻撃」の説明を出す
+    // （コンボ・文字数によるダメージ増加もここでまとめて説明する）
+    if (isTutorial && !tutorialShownRef.current.attack) {
+      tutorialShownRef.current.attack = true;
+      setTutorialMessage([
+        "コト「よし、いよいよキングスライムとの戦いだね！」",
+        "コト「白い文字が出ている間は、あなたの攻撃のターンだよ。」",
+        "コト「ローマ字を最後まで正確に打ち切ると、攻撃が発動するよ！」",
+        "コト「文字数が多い言葉ほど、大きなダメージを与えられるんだ。」",
+        "コト「ミスせず続けて打てると『コンボ』が貯まって、会心（クリティカル）が出やすくなるよ！」",
+      ]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wordList]);
+
+  // チュートリアル戦で、敵の攻撃（防御）フェーズに初めて入ったタイミングで
+  // 「黒い文字＝相手の攻撃」の説明を1回だけ出す
+  useEffect(() => {
+    if (!isTutorial || phase !== "enemyAttack" || tutorialShownRef.current.defense) return;
+
+    tutorialShownRef.current.defense = true;
+    setTutorialMessage([
+      "コト「危ない、キングスライムの攻撃が来るよ！」",
+      "コト「黒い文字が出ているときは、相手の攻撃のターンだよ。」",
+      "コト「今すぐ打ち切って防がないと、ダメージを受けちゃう！」",
+    ]);
+  }, [isTutorial, phase]);
 
   // 階層が変わるたびに、大きく表示してから消す
   useEffect(() => {
@@ -557,8 +602,9 @@ function BattleGame({
     return () => window.clearTimeout(timer);
   }, [floor]);
 
-  // 宝箱を開いている間・ストーリー戦闘の勝利演出中は、単語も時間も完全に止める
-  const isPaused = treasureMessage !== null || storyBattleOver;
+  // 宝箱を開いている間・ストーリー戦闘の勝利演出中・チュートリアルの説明中は、
+  // 単語も時間も完全に止める
+  const isPaused = treasureMessage !== null || storyBattleOver || tutorialMessage !== null;
 
   useEffect(() => {
     if (isGameOver || isPaused) return;
@@ -910,10 +956,16 @@ function BattleGame({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isGameOver) return;
 
-    // 宝箱を開いている間・ストーリー戦闘の勝利演出中はEnterでの再開だけを受け付ける
+    // 宝箱を開いている間・ストーリー戦闘の勝利演出中・チュートリアル説明中は
+    // Enterでの再開だけを受け付ける
     if (isPaused) {
       if (e.key === "Enter") {
         e.preventDefault();
+
+        if (tutorialMessage) {
+          setTutorialMessage(null);
+          return;
+        }
 
         if (storyBattleOver) {
           // 勝った場合は、戦闘終了時点の実際のHPをそのまま次へ持ち越す
@@ -923,6 +975,7 @@ function BattleGame({
             hp: playerHp,
             maxHp: maxPlayerHp,
             learnedWords: battleLearnedWordsRef.current,
+            chapter,
           });
           // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
           // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
@@ -1071,24 +1124,12 @@ function BattleGame({
           */}
           <div className="mt-16">
 
-            <p className="text-white text-lg font-bold bg-black/40 inline-block px-3 py-1 rounded">
-              試練の塔 {floor}F
-            </p>
-
-            <p className="text-white text-xl mt-2">
-              Player HP ({playerHp}/{maxPlayerHp})
-            </p>
-
-            <div className="w-80 h-5 bg-gray-700 rounded overflow-hidden">
-
-              <div
-                className="h-full bg-green-500 rounded transition-all"
-                style={{
-                  width: `${(playerHp / maxPlayerHp) * 100}%`,
-                }}
-              />
-
-            </div>
+            {/* 試練の塔の階層表示は試練の塔モードだけ（ストーリーモードには階層の概念が無いため） */}
+            {!isStory && (
+              <p className="text-white text-lg font-bold bg-black/40 inline-block px-3 py-1 rounded">
+                試練の塔 {floor}F
+              </p>
+            )}
 
           </div>
 
@@ -1111,7 +1152,8 @@ function BattleGame({
 
           <div className="text-right text-white">
 
-            <p>Score : {score}</p>
+            {/* スコアも試練の塔モードだけ表示する（ストーリーモードでは意味を持たないため） */}
+            {!isStory && <p>Score : {score}</p>}
 
             {/* コンボ：会心率メーター */}
             <div className="w-40">
@@ -1189,6 +1231,26 @@ function BattleGame({
         )}
 
         {/*
+          チュートリアル戦（キングスライムとの初戦闘）でだけ出る、コトの説明ポップアップ。
+          treasureMessage等と同じくEnterが押されるまでゲームを止める
+        */}
+        {tutorialMessage && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
+            <div className="bg-gray-900 border-4 border-cyan-300 rounded-xl px-10 py-6 text-center animate-battle-pop max-w-xl">
+              <p className="text-cyan-300 text-2xl font-bold mb-3">📖 コトのアドバイス</p>
+              <div className="space-y-1 mb-3">
+                {tutorialMessage.map((line, i) => (
+                  <p key={i} className="text-white text-lg">
+                    {line}
+                  </p>
+                ))}
+              </div>
+              <p className="text-white/70 text-sm">Enterキーで戦闘を再開</p>
+            </div>
+          </div>
+        )}
+
+        {/*
           宝箱ゲット演出（Enterが押されるまでゲームは止まったまま）。
           この演出はbg-black/60で画面全体を暗くするため、左上の小さい階層表示
           （「試練の塔 ○F」）が見えにくくなってしまう。宝箱を開けている間もこれから
@@ -1256,8 +1318,12 @@ function BattleGame({
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
             <div className="bg-gray-900 border-4 border-red-500 rounded-xl px-12 py-8 text-center">
               <p className="text-red-500 text-4xl font-bold mb-4">GAME OVER</p>
-              <p className="text-white text-xl mb-1">到達階層：{floor}F</p>
-              <p className="text-white text-xl mb-1">スコア：{score}</p>
+              {!isStory && (
+                <>
+                  <p className="text-white text-xl mb-1">到達階層：{floor}F</p>
+                  <p className="text-white text-xl mb-1">スコア：{score}</p>
+                </>
+              )}
               <p className="text-white text-xl">最大コンボ：{maxCombo}</p>
 
               {isStory && (
@@ -1272,6 +1338,7 @@ function BattleGame({
                       hp: maxPlayerHp,
                       maxHp: maxPlayerHp,
                       learnedWords: battleLearnedWordsRef.current,
+                      chapter,
                     });
                     // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
           // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
@@ -1321,6 +1388,23 @@ function BattleGame({
                   -{d.amount}
                 </span>
               ))}
+
+            {/*
+              修正済み：以前は画面左上に離れて「Player HP」の文字とバーを表示していたが、
+              敵側のHP表示（画像の上に重ねる方式）と揃えて、プレイヤーの立ち絵の上に
+              直接重ねる形に変えた
+            */}
+            <div className="absolute -bottom-1 left-0 right-0 px-1">
+              <p className="text-white text-xs text-center bg-black/50 rounded px-1">
+                HP {playerHp}/{maxPlayerHp}
+              </p>
+              <div className="h-2 bg-gray-700 rounded overflow-hidden mt-0.5">
+                <div
+                  className="h-full bg-green-500 rounded transition-all"
+                  style={{ width: `${(playerHp / maxPlayerHp) * 100}%` }}
+                />
+              </div>
+            </div>
 
           </div>
 
@@ -1390,52 +1474,40 @@ function BattleGame({
                           </span>
                         ))}
 
-                    {/* 次の攻撃まで残りターン数 */}
-                    <div className="absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-black/70 border border-white text-white text-sm flex items-center justify-center">
+                    {/* 次の攻撃まで残りターン数。HP表示と重ならないよう右上に配置 */}
+                    <div className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-black/70 border border-white text-white text-sm flex items-center justify-center">
                       {enemy.turnsUntilAttack}
                     </div>
 
-                  </div>
-
-                  {enemy.isBoss && (
-                    <p className="text-red-400 text-lg font-black tracking-widest">
-                      ★ BOSS ★
-                    </p>
-                  )}
-
-                  <p className="text-white text-xl mt-2">
-
-                    {enemy.name}
-
-                  </p>
-
-                  {/*
-                    バーだけだとHPがほぼ0になったとき（撃破演出中など）に
-                    細すぎて見えづらい・読み取れないことがあるので、
-                    プレイヤーHP表示と同じように数字でも常に表示しておく
-                  */}
-                  <p className="text-white/80 text-sm mt-1">
-                    HP {Math.max(enemy.hp, 0)}/{enemy.maxHp}
-                  </p>
-
-                  <div
-                    className={cn(
-                      "h-4 bg-gray-700 rounded mt-1 overflow-hidden",
-                      enemy.isBoss ? "w-80" : "w-56"
-                    )}
-                  >
-
-                    <div
-                      className={cn(
-                        "h-full rounded transition-all duration-300",
-                        enemy.isBoss
-                          ? "bg-gradient-to-r from-yellow-400 to-red-500"
-                          : "bg-red-500"
+                    {/*
+                      修正済み：以前は名前・HP・バーを画像の下に別要素として並べていたが、
+                      プレイヤー側と揃えて、モンスターの画像の上に直接重ねる形に変えた。
+                      バーだけだとHPがほぼ0になったとき（撃破演出中など）に細すぎて
+                      見えづらいので、数字も常に表示しておく
+                    */}
+                    <div className="absolute -bottom-1 left-1 right-1">
+                      {enemy.isBoss && (
+                        <p className="text-red-400 text-xs font-black tracking-widest text-center">
+                          ★ BOSS ★
+                        </p>
                       )}
-                      style={{
-                        width: `${Math.max((enemy.hp / enemy.maxHp) * 100, 0)}%`,
-                      }}
-                    />
+                      <p className="text-white text-xs text-center bg-black/50 rounded px-1">
+                        {enemy.name} HP {Math.max(enemy.hp, 0)}/{enemy.maxHp}
+                      </p>
+                      <div className="h-2 bg-gray-700 rounded overflow-hidden mt-0.5">
+                        <div
+                          className={cn(
+                            "h-full rounded transition-all duration-300",
+                            enemy.isBoss
+                              ? "bg-gradient-to-r from-yellow-400 to-red-500"
+                              : "bg-red-500"
+                          )}
+                          style={{
+                            width: `${Math.max((enemy.hp / enemy.maxHp) * 100, 0)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
 
                   </div>
 
@@ -1535,24 +1607,26 @@ function BattleGame({
             </div>
           </div>
 
-          {/* 入力欄（表示用の値は持たず、キー入力の判定だけに使う） */}
-
-            <input
-            ref={inputRef}
-            value=""
-            onChange={() => {}}
-            onKeyDown={handleKeyDown}
-            autoFocus
-            className="
-                w-[500px]
-                h-16
-                rounded-lg
-                text-center
-                text-3xl
-                text-black
-            "
-            />
         </div>
+
+        {/*
+          入力欄（表示用の値は持たず、キー入力の判定だけに使う）。
+          修正済みのバグ：以前は「下」のflexカラムの一部としてドキュメントの
+          流れの中に置いていたため、プレイヤー・敵の立ち絵を含む中央エリアが
+          画面の高さより大きくなったときに、この入力欄だけ画面外へ押し出されて
+          しまうことがあった（フォーカスした瞬間にブラウザが押し出された入力欄へ
+          スクロールしようとして、画面全体が上にずれて見える現象の原因）。
+          背景画像の上に固定表示するfixedに変えることで、中央エリアの高さに
+          左右されず常に同じ位置に表示されるようにした
+        */}
+        <input
+          ref={inputRef}
+          value=""
+          onChange={() => {}}
+          onKeyDown={handleKeyDown}
+          autoFocus
+          className="fixed bottom-10 left-1/2 -translate-x-1/2 w-[500px] h-16 rounded-lg text-center text-3xl text-black z-10"
+        />
 
       </div>
 

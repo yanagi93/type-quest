@@ -1,4 +1,4 @@
-import type { FloorTileType, GridMap, PlacedObject, TileType } from "./types";
+import type { FloorTileType, GridMap, Interactable, PlacedObject, TileType } from "./types";
 import {
   makeGrid,
   scatterObjects,
@@ -55,6 +55,23 @@ function buildFairyVillageTiles(): TileType[][] {
 
 export const FAIRY_VILLAGE_FLOOR_TEXTURES: FloorTileType[][] = buildFairyVillageFloor();
 export const FAIRY_VILLAGE_MAP: GridMap = buildAreaMap(buildFairyVillageTiles(), { x: 12, y: 17 });
+
+// ============================================================
+// 妖精の里の会話（フェーズ2：マップ同士のつながりを実装）
+// ============================================================
+// 出口（フィールドへ戻る）だけ用意した。魔法の使い方を教わる場面・NPCの中身は
+// まだ実装していない（WORLD_DESIGN.md 2.第3章参照。3章本編を作るときに追加する）
+export const FAIRY_VILLAGE_INTERACTABLES: Interactable[] = [
+  {
+    id: "fairy-village-exit",
+    x: 12,
+    y: 18,
+    kind: "exit",
+    label: "",
+    exitsTo: "field",
+    dialogue: ["妖精の里を出て、森の入り口へ戻った。"],
+  },
+];
 
 // ------------------------------------------------------------
 // ② 迷いの森（MAZE_FOREST_MAP）：木の生け垣で作った一本道の迷路
