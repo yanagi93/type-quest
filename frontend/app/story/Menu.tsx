@@ -14,6 +14,7 @@ import { WordCollection } from "./WordCollection";
 import { Inventory } from "./Inventory";
 import { Status } from "./Status";
 import type { CollectibleWord } from "./chapter1Data";
+import type { SaveSlotId, SlotSummary } from "./useStoryState";
 
 type Tab = "book" | "words" | "items" | "status";
 
@@ -31,6 +32,8 @@ type MenuProps = {
   // 言霊の書タブ
   journalEntries: string[];
   onSave: () => void;
+  slotSummaries: Record<SaveSlotId, SlotSummary | null>;
+  onSaveToSlot: (id: SaveSlotId) => void;
 
   // 言葉の図鑑タブ
   wordDictionary: CollectibleWord[];
@@ -58,6 +61,8 @@ export function Menu({
   onOpenChange,
   journalEntries,
   onSave,
+  slotSummaries,
+  onSaveToSlot,
   wordDictionary,
   wordsLearned,
   attackBooks,
@@ -93,7 +98,12 @@ export function Menu({
         </div>
 
         {tab === "book" && (
-          <KotodamaBook journalEntries={journalEntries} onSave={onSave} />
+          <KotodamaBook
+            journalEntries={journalEntries}
+            onSave={onSave}
+            slotSummaries={slotSummaries}
+            onSaveToSlot={onSaveToSlot}
+          />
         )}
 
         {tab === "words" && (

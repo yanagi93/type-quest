@@ -5,13 +5,11 @@ import { useRouter } from "next/navigation";
 import { GridExplorer } from "./GridExplorer";
 import { StoryDialogue } from "./StoryDialogue";
 import { TitleScreen } from "./TitleScreen";
-import { SaveSlots } from "./SaveSlots";
 import { Menu } from "./Menu";
 import {
   useStoryState,
   readAndClearStoryBattleResult,
   DEFAULT_MAX_HP,
-  MANUAL_SAVE_SLOT_IDS,
   getAllSlotSummaries,
   type Chapter1State,
 } from "./useStoryState";
@@ -55,6 +53,10 @@ import type { DialoguePortrait, Interactable } from "./types";
 // 魔法の森（3章）への目印（magic-forest-view）を実際に開放する条件の言葉。
 // 砂漠の町の旅人（chapter2Data.ts、desert-traveler）から教わる
 const FOREST_UNLOCK_WORD = "もり";
+
+// タイトル画面を一度通過したかどうかをこのタブの間だけ覚えておくためのキー
+// （showTitleの初期化・dismissTitle参照）
+const TITLE_SEEN_SESSION_KEY = "storyTitleSeenThisSession";
 
 // 敵が多すぎるという指摘を受けて0.15から引き下げた。さらに、戦闘から戻った直後に
 // また即エンカウントするとテンポが悪いので、SAFE_STEPS_AFTER_BATTLEぶんは必ず
@@ -291,15 +293,30 @@ export function StoryGame() {
     useStoryState();
   const [dialogue, setDialogue] = useState<Dialogue | null>(null);
   const [showMenu, setShowMenu] = useState(false);
-  // 手動セーブ（セーブ1〜3）のスロット選択画面を表示中かどうか
-  const [showSaveSlots, setShowSaveSlots] = useState(false);
-  // セーブ完了後、一瞬だけ表示する確認メッセージ
-  const [saveConfirmMessage, setSaveConfirmMessage] = useState<string | null>(null);
   // タイトル画面（はじめから／つづきから）を表示中かどうか。永続化されるstateとは
-  // 別の、このタブ・このマウントの間だけ有効なローカル表示フラグ。ページを開くと
-  // 必ずtrueから始まるので、セーブがあってもまずタイトルを一度経由させられる
-  // （逆に、つづきからを選べばstate.sceneはそのままなので、途中の場所から再開できる）
-  const [showTitle, setShowTitle] = useState(true);
+  // 別の、ローカルな表示フラグ。
+  // 修正済みのバグ：以前は常にtrueから始めていたため、/battleからのハード
+  // ナビゲーション（window.location.href = "/story"。/battle→/storyは常にこの
+  // 方式で、ページを完全に作り直す）で村やフィールドへ戻ってくるたびに、StoryGame
+  // ごと再マウントされてこのstateもtrueにリセットされ、毎回タイトル画面（セーブ選択
+  // 画面）を経由しないと先へ進めなくなっていた（ボスを倒した直後もこれに該当し、
+  // 「フィールドへ行けず、セーブ画面が出る」ように見えていた）。
+  // sessionStorageに「このタブでは既にタイトルを通過した」印を残しておき、
+  // 2回目以降のマウントではタイトルを飛ばすようにした（ブラウザを閉じる・新しい
+  // タブを開くと消えるので、次に開いたときはちゃんとタイトルから始まる）
+  const [showTitle, setShowTitle] = useState(() => {
+    if (typeof window === "undefined") return true;
+
+    return window.sessionStorage.getItem(TITLE_SEEN_SESSION_KEY) !== "1";
+  });
+
+  const dismissTitle = () => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(TITLE_SEEN_SESSION_KEY, "1");
+    }
+
+    setShowTitle(false);
+  };
   // 戦闘（フィールドの雑魚戦）から戻った直後、最低SAFE_STEPS_AFTER_BATTLE歩は
   // 次のエンカウントを発生させないための歩数カウンタ。0で始めるので、
   // フィールドに出た直後の最初の数歩はガード無し（村を出てすぐは、この方針で問題ない）
@@ -606,11 +623,11 @@ export function StoryGame() {
       <TitleScreen
         onNewGame={() => {
           handleEnterChapter1();
-          setShowTitle(false);
+          dismissTitle();
         }}
         onSelectSlot={(id) => {
           loadFromSlot(id);
-          setShowTitle(false);
+          dismissTitle();
         }}
       />
     );
@@ -782,46 +799,10 @@ export function StoryGame() {
       </Button>
 
       {/*
-        手動セーブ。押すとセーブ1〜3のどこに保存するか選ぶ画面が出る（空き・埋まって
-        いる both選べる＝allowEmpty）。オートセーブは常に自動で進んでいるので、
-        ここではslot1〜3だけが選択肢になる（MANUAL_SAVE_SLOT_IDS）
+        修正済み：手動セーブは独立したボタン・オーバーレイではなく、メニューの
+        「言霊の書」タブに統合した（KotodamaBook.tsx参照。「記録する」を押すと
+        セーブ1〜3のどこに記録するか選べる）
       */}
-      <Button
-        onClick={() => setShowSaveSlots(true)}
-        className="fixed top-32 left-10 z-50"
-      >
-        💾 セーブ
-      </Button>
-
-      {showSaveSlots && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
-          <div className="bg-slate-900 border-2 border-cyan-400 rounded-xl p-6 flex flex-col items-center gap-4">
-            <p className="text-white text-sm">どこにセーブしますか？</p>
-
-            <SaveSlots
-              slotIds={MANUAL_SAVE_SLOT_IDS}
-              summaries={getAllSlotSummaries()}
-              allowEmpty
-              onSelect={(id) => {
-                saveToSlot(id);
-                setShowSaveSlots(false);
-                setSaveConfirmMessage("セーブしました！");
-                window.setTimeout(() => setSaveConfirmMessage(null), 1500);
-              }}
-            />
-
-            <Button onClick={() => setShowSaveSlots(false)} className="text-sm">
-              キャンセル
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {saveConfirmMessage && (
-        <div className="fixed top-32 right-10 z-50 bg-cyan-900/90 border border-cyan-400 text-white text-sm px-4 py-2 rounded">
-          {saveConfirmMessage}
-        </div>
-      )}
 
       <Menu
         open={showMenu}
@@ -840,6 +821,8 @@ export function StoryGame() {
         maxPlayerHp={state.maxPlayerHp}
         requiredLearnedCount={requiredLearnedCount}
         bossUnlockWordCount={BOSS_UNLOCK_WORD_COUNT}
+        slotSummaries={getAllSlotSummaries()}
+        onSaveToSlot={saveToSlot}
       />
 
       <p className="text-white text-sm">

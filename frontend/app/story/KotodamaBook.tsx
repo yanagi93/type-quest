@@ -3,24 +3,32 @@
 import { useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/8bit/button";
+import { SaveSlots } from "./SaveSlots";
+import { MANUAL_SAVE_SLOT_IDS, type SaveSlotId, type SlotSummary } from "./useStoryState";
 
 const KOTO_PORTRAIT_IMAGE = "/images/kaiwa/kotodamanosei1.png";
 
 type KotodamaBookProps = {
   journalEntries: string[];
   onSave: () => void;
+  slotSummaries: Record<SaveSlotId, SlotSummary | null>;
+  onSaveToSlot: (id: SaveSlotId) => void;
 };
 
-// 主人公が常に持っている『言霊の書』タブの中身。「記録する」を押すと、コトが
-// ひとこと言ってから旅の記憶を1行書き加える、というセーブの演出。実際のセーブ
-// 自体はuseStoryStateが全ての更新のたびに自動でlocalStorageへ行っているので、
-// ここでの「記録する」は技術的なセーブ処理ではなく、プレイヤーに見せるための
-// 儀式・読み物としての機能になっている
-export function KotodamaBook({ journalEntries, onSave }: KotodamaBookProps) {
+// 主人公が常に持っている『言霊の書』タブの中身。「記録する」を押すと、
+// セーブ1〜3のどの枠に記録するか選ぶ画面になる。枠を選ぶと、旅の記憶が1行増えるのと
+// 同時に、実際のセーブ（useStoryStateのslot1〜3。セーブ枠3つまで、+オートセーブ）
+// もその枠へ行われる。
+// 修正済み：以前は「記録する」が実際のセーブ処理と無関係な演出（旅の記憶を書くだけ）
+// だったが、独立していた「💾 セーブ」ボタン・オーバーレイをここに統合した
+export function KotodamaBook({ journalEntries, onSave, slotSummaries, onSaveToSlot }: KotodamaBookProps) {
+  const [showSlots, setShowSlots] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
-  const handleSave = () => {
+  const handleSelectSlot = (id: SaveSlotId) => {
     onSave();
+    onSaveToSlot(id);
+    setShowSlots(false);
     setJustSaved(true);
     window.setTimeout(() => setJustSaved(false), 2500);
   };
@@ -36,7 +44,22 @@ export function KotodamaBook({ journalEntries, onSave }: KotodamaBookProps) {
         </p>
       </div>
 
-      <Button onClick={handleSave}>📖 記録する</Button>
+      {!showSlots ? (
+        <Button onClick={() => setShowSlots(true)}>📖 記録する</Button>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">どの枠に記録しますか？</p>
+
+          <SaveSlots
+            slotIds={MANUAL_SAVE_SLOT_IDS}
+            summaries={slotSummaries}
+            allowEmpty
+            onSelect={handleSelectSlot}
+          />
+
+          <Button onClick={() => setShowSlots(false)}>キャンセル</Button>
+        </div>
+      )}
 
       {justSaved && (
         <div className="border-2 border-yellow-400 rounded-md p-4 text-center bg-yellow-950/10">
