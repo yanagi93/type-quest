@@ -26,6 +26,47 @@ const FLOOR_TILE_IMAGES: Record<FloorTileType, string> = {
   water: "/images/map/okimono/tileset/floor_water_blue.png",
   sand: "/images/map/okimono/tileset/floor_sand_beige.png",
   stone: "/images/map/okimono/tileset/floor_stone_gray.png",
+  forest: "/images/map/okimono/tileset/texture_forest_1.png",
+  // lake/river/mudPattern/mudPlain/sandPattern/sandPlain/forestはRANDOM_VARIANT_IMAGESで
+  // 複数枚の絵から座標ごとにランダム選択されるので、ここの値は使われない
+  // （Recordを完全に埋めるためのフォールバック値として1枚目の絵を入れているだけ）
+  lake: "/images/map/okimono/tileset/texture_lake_water_1.png",
+  river: "/images/map/okimono/tileset/texture_river_water_1.png",
+  mudPattern: "/images/map/okimono/tileset/texture_mud_pattern_1.png",
+  mudPlain: "/images/map/okimono/tileset/texture_mud_plain_1.png",
+  sandPattern: "/images/map/okimono/tileset/texture_sand_pattern_1.png",
+  sandPlain: "/images/map/okimono/tileset/texture_sand_plain_1.png",
+  // pondA1〜4・pondB1〜4は、池の縁の草の割合が少しずつ違う個別のパーツなので、
+  // ランダム選択せずそれぞれ決まった絵を敷く（池の形は塗るときに手で選んで作る）
+  pondA1: "/images/map/okimono/tileset/texture_pond_a_1.png",
+  pondA2: "/images/map/okimono/tileset/texture_pond_a_2.png",
+  pondA3: "/images/map/okimono/tileset/texture_pond_a_3.png",
+  pondA4: "/images/map/okimono/tileset/texture_pond_a_4.png",
+  pondB1: "/images/map/okimono/tileset/texture_pond_b_1.png",
+  pondB2: "/images/map/okimono/tileset/texture_pond_b_2.png",
+  pondB3: "/images/map/okimono/tileset/texture_pond_b_3.png",
+  pondB4: "/images/map/okimono/tileset/texture_pond_b_4.png",
+  floorAccentBlue: "/images/map/okimono/tileset/floor_blue_solid.png",
+  floorAccentTeal: "/images/map/okimono/tileset/floor_teal_solid.png",
+  floorAccentBrownSpeckle: "/images/map/okimono/tileset/floor_brown_speckle.png",
+  floorAccentTanSpeckle: "/images/map/okimono/tileset/floor_tan_speckle.png",
+  floorAccentGraySpeckle: "/images/map/okimono/tileset/floor_pale_gray_speckle.png",
+  floorAccentTealDarkSpeckle: "/images/map/okimono/tileset/floor_teal_dark_speckle.png",
+  floorAccentCyanSparkle: "/images/map/okimono/tileset/floor_cyan_sparkle.png",
+  floorAccentPurpleSparkle: "/images/map/okimono/tileset/floor_purple_sparkle.png",
+  floorAccentFlower: "/images/map/okimono/tileset/floor_dirt_light_flower.png",
+};
+
+// 単調な繰り返しに見えないように、座標ごとに決定的なランダムで数枚の絵から1枚を選ぶ床タイプ。
+// resolveFloorImagesが、この一覧にある床タイプだけFLOOR_TILE_IMAGESの代わりにここから選ぶ
+const RANDOM_VARIANT_IMAGES: Partial<Record<FloorTileType, string[]>> = {
+  lake: [1, 2, 3, 4].map((n) => `/images/map/okimono/tileset/texture_lake_water_${n}.png`),
+  river: [1, 2, 3, 4].map((n) => `/images/map/okimono/tileset/texture_river_water_${n}.png`),
+  mudPattern: [1, 2].map((n) => `/images/map/okimono/tileset/texture_mud_pattern_${n}.png`),
+  mudPlain: [1, 2].map((n) => `/images/map/okimono/tileset/texture_mud_plain_${n}.png`),
+  sandPattern: [1, 2].map((n) => `/images/map/okimono/tileset/texture_sand_pattern_${n}.png`),
+  sandPlain: [1, 2].map((n) => `/images/map/okimono/tileset/texture_sand_plain_${n}.png`),
+  forest: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `/images/map/okimono/tileset/texture_forest_${n}.png`),
 };
 
 // 草と接する境界だけ、ベタ画像の代わりに敷く「縁」タイル。上下左右それぞれの方向に、
@@ -86,6 +127,12 @@ function resolveFloorImages(floorTextures: FloorTileType[][]): string[][] {
       if (!edges) {
         if (floorType === "grass" && pseudoRandom(x, y) < FLOWER_GRASS_CHANCE) {
           return GRASS_FLOWER_IMAGE;
+        }
+
+        const variants = RANDOM_VARIANT_IMAGES[floorType];
+        if (variants) {
+          const index = Math.floor(pseudoRandom(x, y) * variants.length) % variants.length;
+          return variants[index];
         }
 
         return FLOOR_TILE_IMAGES[floorType];
@@ -162,6 +209,28 @@ export function GridExplorer({
     () => (floorTextures ? resolveFloorImages(floorTextures) : null),
     [floorTextures]
   );
+
+  // 修正済みのバグ：objectsを毎レンダー（1歩動くたびに140ms間隔で）全件ループして
+  // 画面内判定していたため、フィールドマップの置物が1200個超に増えたあと、
+  // 特にビューポートが横長で1歩の縦移動で画面に入ってくる置物候補が多い上下方向の
+  // 移動時にカクつきが目立つようになっていた。objectsの参照が変わったとき
+  // （シーン切り替え時）だけ、座標をマス目16個単位のバケツに振り分けておき、
+  // 毎レンダーはカメラに近いバケツの置物だけを候補にすることで、
+  // 1歩ごとの計算量をマップ全体の置物数に依存しないようにした
+  const OBJECT_BUCKET_SIZE = 16;
+  const objectBuckets = useMemo(() => {
+    const buckets = new Map<string, PlacedObject[]>();
+
+    for (const object of objects) {
+      const bucketKey = `${Math.floor(object.x / OBJECT_BUCKET_SIZE)},${Math.floor(object.y / OBJECT_BUCKET_SIZE)}`;
+      const bucket = buckets.get(bucketKey);
+
+      if (bucket) bucket.push(object);
+      else buckets.set(bucketKey, [object]);
+    }
+
+    return buckets;
+  }, [objects]);
 
   // 押されている方向キー（押した順）。一番最後に押したキーの方向へ進む
   const heldKeysRef = useRef<DirectionKey[]>([]);
@@ -370,28 +439,42 @@ export function GridExplorer({
     });
   }
 
-  for (const object of objects) {
-    const w = object.widthTiles * tileSize;
-    const h = object.heightTiles * tileSize;
-    const left = (object.x + 0.5) * tileSize - w / 2;
-    const top = (object.y + 1) * tileSize - h;
+  // カメラ近くのバケツだけを候補にする（objectBuckets参照）。isFootprintVisibleの
+  // 最終判定はこれまでどおり行うので、見た目の挙動は変えていない
+  const bucketMinX = Math.floor(startCol / OBJECT_BUCKET_SIZE) - 1;
+  const bucketMaxX = Math.floor(endCol / OBJECT_BUCKET_SIZE) + 1;
+  const bucketMinY = Math.floor(startRow / OBJECT_BUCKET_SIZE) - 1;
+  const bucketMaxY = Math.floor(endRow / OBJECT_BUCKET_SIZE) + 1;
 
-    if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
+  for (let bucketY = bucketMinY; bucketY <= bucketMaxY; bucketY++) {
+    for (let bucketX = bucketMinX; bucketX <= bucketMaxX; bucketX++) {
+      const bucket = objectBuckets.get(`${bucketX},${bucketY}`);
+      if (!bucket) continue;
 
-    const sprite: Sprite = {
-      key: `object-${object.id}`,
-      image: object.image,
-      left,
-      top,
-      width: w,
-      height: h,
-      sortY: object.y,
-    };
+      for (const object of bucket) {
+        const w = object.widthTiles * tileSize;
+        const h = object.heightTiles * tileSize;
+        const left = (object.x + 0.5) * tileSize - w / 2;
+        const top = (object.y + 1) * tileSize - h;
 
-    if (object.groundLevel) {
-      groundSprites.push(sprite);
-    } else {
-      sprites.push(sprite);
+        if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
+
+        const sprite: Sprite = {
+          key: `object-${object.id}`,
+          image: object.image,
+          left,
+          top,
+          width: w,
+          height: h,
+          sortY: object.y,
+        };
+
+        if (object.groundLevel) {
+          groundSprites.push(sprite);
+        } else {
+          sprites.push(sprite);
+        }
+      }
     }
   }
 

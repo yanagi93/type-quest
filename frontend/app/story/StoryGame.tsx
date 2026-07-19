@@ -9,6 +9,7 @@ import { Menu } from "./Menu";
 import {
   useStoryState,
   readAndClearStoryBattleResult,
+  hasPendingStoryBattleResult,
   DEFAULT_MAX_HP,
   getAllSlotSummaries,
   type Chapter1State,
@@ -29,6 +30,8 @@ import {
   FIELD_FLOOR_TEXTURES,
   FIELD_OBJECTS,
   FIELD_INTERACTABLES,
+  FIELD_STRENGTH_PUZZLE_WORD,
+  FIELD_STRENGTH_PUZZLE_ROCK_ID,
   BOSS_UNLOCK_WORD_COUNT,
   CHAPTER1_WORD_DICTIONARY,
   WORD_EXCLUDED_FROM_COUNT,
@@ -304,8 +307,13 @@ export function StoryGame() {
   // sessionStorageに「このタブでは既にタイトルを通過した」印を残しておき、
   // 2回目以降のマウントではタイトルを飛ばすようにした（ブラウザを閉じる・新しい
   // タブを開くと消えるので、次に開いたときはちゃんとタイトルから始まる）
+  // 追加の保険：セッションの印が何らかの理由で欠けていても、/battleからの
+  // 戦闘結果（hasPendingStoryBattleResult）が残っている場合は、それだけで
+  // 「今まさに村・フィールドへ戻ってきた瞬間」だと確定できるので、無条件で
+  // タイトルをスキップする（このチェックのほうが、セッションの印より確実）
   const [showTitle, setShowTitle] = useState(() => {
     if (typeof window === "undefined") return true;
+    if (hasPendingStoryBattleResult()) return false;
 
     return window.sessionStorage.getItem(TITLE_SEEN_SESSION_KEY) !== "1";
   });
@@ -353,6 +361,9 @@ export function StoryGame() {
         scene: "town",
         playerPos: TOWN_MAP.start,
       });
+      // localStorageの戦闘結果（外部システム）を読んだ結果としての一度きりの反映なので、
+      // レンダー中に計算し直せる値ではない。ここでのsetState呼び出しは意図的なもの
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDialogue({
         lines: REVIVAL_LINES,
         portraits: [PLAYER_PORTRAIT, KOTO_RIGHT],
@@ -741,13 +752,21 @@ export function StoryGame() {
   const isSafeArea = isTown || isDesertTown || isFairyVillage;
 
   const map = isTown ? TOWN_MAP : isDesertTown ? DESERT_TOWN_MAP : isFairyVillage ? FAIRY_VILLAGE_MAP : FIELD_MAP;
+  // 「ちからもち」を覚えていたら、フィールドの岩どかしパズル（FIELD_STRENGTH_PUZZLE）
+  // の岩をinteractablesから除外する。GridExplorer.tsxはinteractablesに無いマスは
+  // ただの床として扱うので、これだけで「岩が消えて奥まで歩ける」演出になる
+  // （岩のデータやhandleBump自体は変えていない。除外するかどうかをここで動的に決めるだけ）
+  const fieldInteractables = state.wordsLearned.includes(FIELD_STRENGTH_PUZZLE_WORD)
+    ? FIELD_INTERACTABLES.filter((i) => i.id !== FIELD_STRENGTH_PUZZLE_ROCK_ID)
+    : FIELD_INTERACTABLES;
+
   const interactables = isTown
     ? [...TOWN_INTERACTABLES, ...wanderers]
     : isDesertTown
     ? DESERT_TOWN_INTERACTABLES
     : isFairyVillage
     ? FAIRY_VILLAGE_INTERACTABLES
-    : FIELD_INTERACTABLES;
+    : fieldInteractables;
   const objects = isTown ? TOWN_OBJECTS : isDesertTown ? DESERT_TOWN_OBJECTS : isFairyVillage ? FAIRY_VILLAGE_OBJECTS : FIELD_OBJECTS;
   const tileSize = isTown
     ? TOWN_TILE_SIZE

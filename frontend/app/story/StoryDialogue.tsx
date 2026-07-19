@@ -50,9 +50,14 @@ export function StoryDialogue({ open, lines, onComplete, title, portraits, backg
   // 壊れた画像アイコンを出さず、単色の暗い背景のまま表示する
   const [failedBackgrounds, setFailedBackgrounds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  // open・linesが変わった直後にstepを0へ戻す処理。useEffect内でsetStateすると
+  // 余分な再レンダーが挟まるため、Reactが推奨する「レンダー中に前回値と比べて
+  // 直接更新する」形にしてある（https://react.dev/learn/you-might-not-need-an-effect）
+  const [resetKey, setResetKey] = useState({ open, lines });
+  if (resetKey.open !== open || resetKey.lines !== lines) {
+    setResetKey({ open, lines });
     if (open) setStep(0);
-  }, [open, lines]);
+  }
 
   const isLast = step >= lines.length - 1;
 

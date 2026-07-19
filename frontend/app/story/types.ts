@@ -11,7 +11,44 @@ export type GridMap = {
 // 「歩けるかどうか」に関係なく、全マスに何かしらの床画像を敷くために使う。
 // sand/stoneはフィールド（世界地図）を新しいタイル素材で作り直すときに追加した
 // （chapter1Data.ts FIELD_FLOOR_ROWS参照。村側はgrass/dirt/waterのみ使用）
-export type FloorTileType = "grass" | "dirt" | "water" | "sand" | "stone";
+// lake〜floorAccentFlowerは、川・湖・池・砂地・泥地・床飾りをマップエディタで
+// 「置物」ではなく「床」として塗れるようにするために追加した（以前はPlacedObjectとして
+// 1マスずつスタンプしていたが、水辺の形などは床のドラッグ塗りで作るほうが自然なため）。
+// lake/river/mudPattern/mudPlain/sandPattern/sandPlainは、GridExplorer.tsxの
+// RANDOM_VARIANT_IMAGESで座標ごとに数枚の絵を決定的にランダム選択して敷く
+// （grass内の花入り草タイルと同じ「単調な繰り返しを避ける」仕組み）。
+// pondA1〜4・pondB1〜4は、池の形を手で組み立てるための1枚ずつ違う絵（草の割合が
+// 違う縁パーツ）なので、こちらはランダム選択せず個別に選んで塗る
+export type FloorTileType =
+  | "grass"
+  | "dirt"
+  | "water"
+  | "sand"
+  | "stone"
+  | "forest"
+  | "lake"
+  | "river"
+  | "mudPattern"
+  | "mudPlain"
+  | "sandPattern"
+  | "sandPlain"
+  | "pondA1"
+  | "pondA2"
+  | "pondA3"
+  | "pondA4"
+  | "pondB1"
+  | "pondB2"
+  | "pondB3"
+  | "pondB4"
+  | "floorAccentBlue"
+  | "floorAccentTeal"
+  | "floorAccentBrownSpeckle"
+  | "floorAccentTanSpeckle"
+  | "floorAccentGraySpeckle"
+  | "floorAccentTealDarkSpeckle"
+  | "floorAccentCyanSparkle"
+  | "floorAccentPurpleSparkle"
+  | "floorAccentFlower";
 
 export type Interactable = {
   id: string;

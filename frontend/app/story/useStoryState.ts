@@ -403,6 +403,16 @@ export function writeStoryBattleResult(result: StoryBattleResult) {
   window.localStorage.setItem(BATTLE_RESULT_KEY, JSON.stringify(result));
 }
 
+// /battleから戻ってきた直後（戦闘結果の反映待ち）かどうかを、中身を消費せずに
+// 確認するだけのヘルパー。StoryGame.tsxがタイトル画面を出すかどうかの判定に使う
+// （読み込み中に戦闘結果があるなら、それはハードナビゲーションで村・フィールドに
+// 戻ってきた瞬間なので、タイトルを挟まず結果の反映へ直行させたい）
+export function hasPendingStoryBattleResult(): boolean {
+  if (typeof window === "undefined") return false;
+
+  return window.localStorage.getItem(BATTLE_RESULT_KEY) !== null;
+}
+
 export function readAndClearStoryBattleResult(): StoryBattleResult | null {
   if (typeof window === "undefined") return null;
 

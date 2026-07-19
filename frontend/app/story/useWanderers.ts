@@ -34,12 +34,20 @@ export function useWanderers(
     return initial;
   });
 
+  // レンダー中に直接ref.currentを書き換えるのはReactのルール違反（並行レンダリングで
+  // 不整合を起こしうる）なので、useEffectで最新値に同期する形にしてある
   const positionsRef = useRef(positions);
-  positionsRef.current = positions;
+  useEffect(() => {
+    positionsRef.current = positions;
+  }, [positions]);
   const playerPosRef = useRef(playerPos);
-  playerPosRef.current = playerPos;
+  useEffect(() => {
+    playerPosRef.current = playerPos;
+  }, [playerPos]);
   const isLockedRef = useRef(isLocked);
-  isLockedRef.current = isLocked;
+  useEffect(() => {
+    isLockedRef.current = isLocked;
+  }, [isLocked]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -99,7 +107,6 @@ export function useWanderers(
       }
 
       if (changed) setPositions(next);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, WANDER_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
