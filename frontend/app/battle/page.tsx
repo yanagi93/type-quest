@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { HomeButton } from "@/components/HomeButton";
 
@@ -162,7 +162,18 @@ type TreasureMessage = {
   text: string;
 };
 
+// useSearchParams()を使うコンポーネントはSuspenseで包む必要がある
+// （包まないと、next buildで「useSearchParams() should be wrapped in a suspense
+// boundary」というプリレンダーエラーになりビルド自体が失敗する）
 export default function BattlePage() {
+  return (
+    <Suspense fallback={null}>
+      <BattlePageContent />
+    </Suspense>
+  );
+}
+
+function BattlePageContent() {
   const searchParams = useSearchParams();
 
   const level = searchParams.get("level") || "easy";
@@ -555,8 +566,11 @@ function BattleGame({
     setTreasureMessage({ type, text });
   };
 
-  // ゲーム開始時に1階の敵と最初の単語を用意する（最初は必ず自分の攻撃から）
+  // ゲーム開始時に1階の敵と最初の単語を用意する（最初は必ず自分の攻撃から）。
+  // 複数のstateをまとめて初期化する一度きりの処理なので、素のuseStateの初期値では
+  // 表現しづらく、effectのままにしてある
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveEnemies(spawnFloorEnemies(1));
 
     const word = pickWordForPhase("playerAttack");
@@ -595,6 +609,7 @@ function BattleGame({
 
   // 階層が変わるたびに、大きく表示してから消す
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFloorAnnounce(floor);
 
     const timer = window.setTimeout(() => setFloorAnnounce(null), 1600);
@@ -630,9 +645,12 @@ function BattleGame({
     return () => clearInterval(timer);
   }, [isGameOver, isPaused]);
 
-  // 残り時間・プレイヤーHPのどちらかが尽きたらゲームオーバー
+  // 残り時間・プレイヤーHPのどちらかが尽きたらゲームオーバー。一度trueにしたら
+  // 二度と戻さない「一方通行」の状態なので、単純な派生値（timeLeft<=0など）には
+  // 置き換えられない
   useEffect(() => {
     if (!isGameOver && (timeLeft <= 0 || playerHp <= 0)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsGameOver(true);
     }
   }, [timeLeft, playerHp, isGameOver]);
@@ -650,10 +668,14 @@ function BattleGame({
     api.postScore(isStory ? "story" : "practice", isStory ? null : level, score, floor).catch(() => {});
   }, [isGameOver, isStory, level, score, floor]);
 
-  // これまでの最大コンボを記録しておく（ゲームオーバー画面用）
-  useEffect(() => {
-    setMaxCombo((prev) => Math.max(prev, combo));
-  }, [combo]);
+  // これまでの最大コンボを記録しておく（ゲームオーバー画面用）。純粋にcomboの推移だけで
+  // 決まる値なので、effectではなくレンダー中に前回値と比べて直接更新する形にしてある
+  // （https://react.dev/learn/you-might-not-need-an-effect）
+  const [prevCombo, setPrevCombo] = useState(combo);
+  if (prevCombo !== combo) {
+    setPrevCombo(combo);
+    if (combo > maxCombo) setMaxCombo(combo);
+  }
 
   const tickDown = (list: ActiveEnemy[]) =>
     list.map((e) => ({ ...e, turnsUntilAttack: e.turnsUntilAttack - 1 }));
@@ -927,6 +949,7 @@ function BattleGame({
 
     if (wordX < -300) {
       // 単語を最後まで打ちきれなかった。大きめのミスとして扱う
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMissFlash(true);
       window.setTimeout(() => setMissFlash(false), MISS_FLASH_MS);
 
