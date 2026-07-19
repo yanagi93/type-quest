@@ -180,8 +180,8 @@ function BattlePageContent() {
   const mode = searchParams.get("mode") || "practice";
   const encounter = searchParams.get("encounter") || "";
   const learnedWords = searchParams.get("words") || "";
-  // 村の門を通るときの、キングスライムとのチュートリアル戦かどうか
-  // （StoryGame.tsxのtown-exitから&tutorial=1付きで飛んでくる）
+  // ストーリーモードで最初に迎える戦闘（雑魚戦・ボス戦のどちらが先でも良い）かどうか。
+  // StoryGame.tsxがstate.hasHadFirstBattleを見て、最初の1回だけ&tutorial=1を付けてくる
   const isTutorial = searchParams.get("tutorial") === "1";
   // どの章のボスと戦っているか（StoryGame.tsxの&chapter=をそのまま受け取る）。
   // 勝った場合、この番号をそのままStoryBattleResultへ渡し、次の章へ進める材料にする
@@ -584,7 +584,7 @@ function BattleGame({
     if (isTutorial && !tutorialShownRef.current.attack) {
       tutorialShownRef.current.attack = true;
       setTutorialMessage([
-        "コト「よし、いよいよキングスライムとの戦いだね！」",
+        "コト「よし、いよいよ最初の戦いだね！」",
         "コト「白い文字が出ている間は、あなたの攻撃のターンだよ。」",
         "コト「ローマ字を最後まで正確に打ち切ると、攻撃が発動するよ！」",
         "コト「文字数が多い言葉ほど、大きなダメージを与えられるんだ。」",
@@ -601,7 +601,7 @@ function BattleGame({
 
     tutorialShownRef.current.defense = true;
     setTutorialMessage([
-      "コト「危ない、キングスライムの攻撃が来るよ！」",
+      "コト「危ない、敵の攻撃が来るよ！」",
       "コト「黒い文字が出ているときは、相手の攻撃のターンだよ。」",
       "コト「今すぐ打ち切って防がないと、ダメージを受けちゃう！」",
     ]);

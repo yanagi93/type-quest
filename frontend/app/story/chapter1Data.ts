@@ -1114,12 +1114,36 @@ export const FIELD_TOWN_ENTRANCE: Interactable = {
   dialogue: ["村の門をくぐり、中へ戻った。"],
 };
 
-// 修正済み：以前はここ（スライムの丘）に実際にキングスライムが立っていて、
-// フィールドを歩いていて何も知らずに本番のボス戦へ突入してしまう作りだった。
-// 今は村の門を出た瞬間に戦闘チュートリアルとしてキングスライム戦が始まる方式に
-// 変えた（StoryGame.tsxのhandleBump、kind:"exit"の分岐参照）ので、
-// フィールド上に実際に立たせて触れられるインタラクタブルは無い（FIELD_INTERACTABLES
-// にも含めていない）。「スライムの丘」という名前はこのお知らせコメントにだけ残っている
+// 村の門を出てすぐ戦闘になるチュートリアル方式はやめ、キングスライムを再び
+// フィールド上に実際に立たせる形に戻した。北東の始まりの島、木立の切れ目
+// （(115,10)〜(115,11)の縦2マス、tree-double-obj-27/29とtree-double-obj-31/33の
+// 間にできている1マス幅の通路）にちょうど収まるように配置している。
+// GridExplorer.tsxのぶつかり判定はinteractionX/Yを1マスずつしか見ないため、
+// 通路の縦2マスのどちらにぶつかっても同じボス戦になるよう、Interactableを2つ用意する
+export const FIELD_BOSS: Interactable[] = [
+  {
+    id: "field-boss-slime-king-1",
+    x: 115,
+    y: 10,
+    kind: "boss",
+    label: "\u{1F451}",
+    dialogue: [
+      "強大な気配がする……この先にキングスライムがいるようだ。",
+      "もう少し言葉を集めてから来た方が良さそうだ。",
+    ],
+  },
+  {
+    id: "field-boss-slime-king-2",
+    x: 115,
+    y: 11,
+    kind: "boss",
+    label: "\u{1F451}",
+    dialogue: [
+      "強大な気配がする……この先にキングスライムがいるようだ。",
+      "もう少し言葉を集めてから来た方が良さそうだ。",
+    ],
+  },
+];
 
 // ============================================================
 // 他の章の本拠地への「行き先」だけ見える目印
@@ -1198,6 +1222,7 @@ const FIELD_STRENGTH_PUZZLE: Interactable[] = [
 
 export const FIELD_INTERACTABLES: Interactable[] = [
   FIELD_TOWN_ENTRANCE,
+  ...FIELD_BOSS,
   ...FIELD_LANDMARKS,
   ...FIELD_STRENGTH_PUZZLE,
 ];

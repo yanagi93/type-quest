@@ -36,6 +36,9 @@ export type Chapter1State = {
   playerPos: { x: number; y: number };
   wordsLearned: string[]; // 覚えた単語のkana
   bossDefeated: boolean;
+  // 一度でも戦闘（雑魚戦・ボス戦問わず）を経験したか。falseの間だけ、次に入る戦闘へ
+  // &tutorial=1を付けてコトの操作説明を出す（StoryGame.tsxのhandleBump/handleFieldStep参照）
+  hasHadFirstBattle: boolean;
   chestsOpened: string[]; // 開けた宝箱のid（同じ宝箱から二度もらえないようにする）
   attackBooks: number; // 宝箱で手に入れた攻撃力の書の数
   defenseBooks: number; // 宝箱で手に入れた防御力の書の数
@@ -61,6 +64,7 @@ const DEFAULT_STATE: Chapter1State = {
   playerPos: { x: 0, y: 0 },
   wordsLearned: [],
   bossDefeated: false,
+  hasHadFirstBattle: false,
   chestsOpened: [],
   attackBooks: 0,
   defenseBooks: 0,

@@ -427,6 +427,7 @@ export function StoryGame() {
       playerPos: TOWN_MAP.start,
       wordsLearned: [],
       bossDefeated: false,
+      hasHadFirstBattle: false,
       chestsOpened: [],
       attackBooks: 0,
       defenseBooks: 0,
@@ -485,9 +486,9 @@ export function StoryGame() {
 
     if (interactable.kind === "exit") {
       const destination = interactable.exitsTo;
-      // 村の門（town-exit-1〜3）だけが、キングスライムとの戦闘チュートリアルへの
-      // 入り口になる。desertTown/fairyVillageからフィールドへ戻るときなど、
-      // 他の"field"行き出口では戦闘は発生しない（idで明確に区別している）
+      // 村の門（town-exit-1〜3）だけが、必須の言葉3つを集めるまで通れない関門になる。
+      // desertTown/fairyVillageからフィールドへ戻るときなど、他の"field"行き出口では
+      // この制限はかからない（idで明確に区別している）
       const isTownGate = interactable.id.startsWith("town-exit-");
 
       // 村の外に出るには、最低限の言葉（はな以外で3つ）を集めておく必要がある。
@@ -509,22 +510,6 @@ export function StoryGame() {
         portraits,
         onComplete: () => {
           setDialogue(null);
-
-          if (isTownGate) {
-            // 村の門を出る＝キングスライムとの戦闘チュートリアル。フィールドを
-            // 歩き回ってボスを探させるのではなく、門を出た瞬間に戦いが始まる形にした
-            // （フィールドに突っ立っているボスにいきなり触れてしまう事故を避けるため）。
-            // このバトルの勝敗が、そのまま第1章のボス戦の勝敗になる
-            // （&tutorial=1で/battle側にチュートリアル説明の表示を指示する）
-            const words = encodeURIComponent(state.wordsLearned.join(","));
-            const params =
-              `mode=story&chapter=1&encounter=boss&tutorial=1&words=${words}` +
-              `&attackBooks=${state.attackBooks}&defenseBooks=${state.defenseBooks}` +
-              `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
-
-            router.push(`/battle?${params}`);
-            return;
-          }
 
           if (destination === "field") update({ scene: "field", playerPos: FIELD_MAP.start });
           else if (destination === "town") update({ scene: "town", playerPos: TOWN_REENTRY_POS });
@@ -549,9 +534,16 @@ export function StoryGame() {
         return;
       }
 
+      // コトによるバトルのチュートリアルは、キングスライム戦かどうかではなく
+      // 「まだ一度も戦闘をしていないか」で出し分ける（雑魚戦が先でもボス戦が先でも、
+      // 最初の戦闘でだけ&tutorial=1を付ける）
+      const isFirstBattle = !state.hasHadFirstBattle;
+      if (isFirstBattle) update({ hasHadFirstBattle: true });
+
       const words = encodeURIComponent(state.wordsLearned.join(","));
       const params =
         `mode=story&chapter=1&encounter=boss&words=${words}` +
+        (isFirstBattle ? "&tutorial=1" : "") +
         `&attackBooks=${state.attackBooks}&defenseBooks=${state.defenseBooks}` +
         `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
 
@@ -619,10 +611,16 @@ export function StoryGame() {
     if (Math.random() < ENCOUNTER_CHANCE_PER_STEP) {
       stepsSinceBattleRef.current = 0;
 
+      // コトによるバトルのチュートリアルは、最初の戦闘でだけ出す
+      // （ボス戦のkind:"boss"分岐と同じ判定。StoryGame.tsxのhandleBump参照）
+      const isFirstBattle = !state.hasHadFirstBattle;
+      if (isFirstBattle) update({ hasHadFirstBattle: true });
+
       // フィールドの雑魚戦にも、ボス戦と同じく「見つけた（覚えた）言葉」とHPを渡す
       const words = encodeURIComponent(state.wordsLearned.join(","));
       const params =
         `mode=story&chapter=1&encounter=field&words=${words}` +
+        (isFirstBattle ? "&tutorial=1" : "") +
         `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
 
       router.push(`/battle?${params}`);
