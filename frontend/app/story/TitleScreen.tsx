@@ -1,17 +1,26 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { Card } from "@/components/ui/8bit/card";
 import { DotGothic16 } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { HomeButton } from "@/components/HomeButton";
-import { getAllSlotSummaries, type SaveSlotId } from "./useStoryState";
+import { getAllSlotSummaries, type SaveSlotId, type SlotSummary } from "./useStoryState";
 import { SaveSlots } from "./SaveSlots";
 
 const dotFont = DotGothic16({ weight: "400", subsets: ["latin"] });
 
 const CONTINUE_SLOT_ORDER: SaveSlotId[] = ["auto", "slot1", "slot2", "slot3"];
+
+// サーバー側はlocalStorageを読めないため、初回描画（SSR・ハイドレーション）は
+// 常にこの「全スロット空き」で揃えておく（TitleScreen参照）
+const EMPTY_SUMMARIES: Record<SaveSlotId, SlotSummary | null> = {
+  auto: null,
+  slot1: null,
+  slot2: null,
+  slot3: null,
+};
 
 type TitleScreenProps = {
   onNewGame: () => void;
@@ -28,9 +37,19 @@ type TitleScreenProps = {
 // （SaveSlots参照）
 export function TitleScreen({ onNewGame, onSelectSlot }: TitleScreenProps) {
   const [showSlots, setShowSlots] = useState(false);
-  // 画面を開くたびに1回だけ読めば十分（このタイトル画面を表示している間に
-  // 他のタブでセーブが増えたりはしないため）
-  const summaries = useMemo(() => getAllSlotSummaries(), []);
+  // 修正済みのバグ：以前はuseMemoでgetAllSlotSummaries()を直接呼んでいたため、
+  // サーバー側（localStorageが無く常に空き扱い）とクライアント側（実際の
+  // セーブデータが読める）とで「つづきから」カードの有無が食い違い、
+  // ハイドレーションエラーになっていた。初回描画は必ずEMPTY_SUMMARIESで揃えておき、
+  // マウント後（クライアントのみ）のeffectで実際の中身を読み込むことで、
+  // サーバーとクライアントの最初の描画結果を一致させている
+  const [summaries, setSummaries] = useState(EMPTY_SUMMARIES);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSummaries(getAllSlotSummaries());
+  }, []);
+
   const hasAnySave = CONTINUE_SLOT_ORDER.some((id) => summaries[id] != null);
 
   return (

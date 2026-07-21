@@ -13,10 +13,12 @@ import { KotodamaBook } from "./KotodamaBook";
 import { WordCollection } from "./WordCollection";
 import { Inventory } from "./Inventory";
 import { Status } from "./Status";
+import { FieldMapView } from "./FieldMapView";
 import type { CollectibleWord } from "./chapter1Data";
 import type { SaveSlotId, SlotSummary } from "./useStoryState";
+import type { FloorTileType, PlacedObject } from "./types";
 
-type Tab = "book" | "words" | "items" | "status";
+type Tab = "book" | "words" | "items" | "status" | "map";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "book", label: "📖 言霊の書" },
@@ -52,6 +54,14 @@ type MenuProps = {
   maxPlayerHp: number;
   requiredLearnedCount: number;
   bossUnlockWordCount: number;
+
+  // フィールドマップタブ。長老から世界の地図をもらう（chestsOpenedに"house-elder"が
+  // 入る）まではタブ自体を出さない
+  hasFieldMap: boolean;
+  fieldFloorTextures: FloorTileType[][];
+  fieldObjects: PlacedObject[];
+  fieldPlayerPos: { x: number; y: number } | null;
+  fieldObjective: { x: number; y: number } | null;
 };
 
 // 言霊の書・言葉の図鑑・持ち物・ステータスを1つのボタンから開ける、まとめメニュー。
@@ -75,18 +85,31 @@ export function Menu({
   maxPlayerHp,
   requiredLearnedCount,
   bossUnlockWordCount,
+  hasFieldMap,
+  fieldFloorTextures,
+  fieldObjects,
+  fieldPlayerPos,
+  fieldObjective,
 }: MenuProps) {
   const [tab, setTab] = useState<Tab>("book");
+  // 地図を持っていないうちはタブ自体を出さない（持ち物と同じく、手に入れて
+  // 初めて存在に気づく形にしたいので、グレーアウトではなく非表示にしている）
+  const visibleTabs = hasFieldMap ? [...TABS, { key: "map" as const, label: "🗺️ フィールドマップ" }] : TABS;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      {/* 修正済みのバグ：DialogContentの基底クラス（components/ui/dialog.tsx）に
+          sm:max-w-smが入っており、無印のmax-w-xlはtwMergeの競合解決上「別バリアント」
+          扱いになって上書きされていなかった（実際の画面幅ではsm:max-w-smが優先され、
+          384pxに制限されたまま。フィールドマップ（512px幅）がカードの外にはみ出す
+          原因になっていた）。同じsm:接頭辞を付けて確実に上書きする */}
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>メニュー</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-wrap gap-2 mb-2">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <Button
               key={t.key}
               onClick={() => setTab(t.key)}
@@ -133,6 +156,15 @@ export function Menu({
             wordDictionaryCount={wordDictionary.length}
             requiredLearnedCount={requiredLearnedCount}
             bossUnlockWordCount={bossUnlockWordCount}
+          />
+        )}
+
+        {tab === "map" && hasFieldMap && (
+          <FieldMapView
+            floorTextures={fieldFloorTextures}
+            objects={fieldObjects}
+            playerPos={fieldPlayerPos}
+            objective={fieldObjective}
           />
         )}
       </DialogContent>

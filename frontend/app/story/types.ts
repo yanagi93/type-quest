@@ -77,8 +77,10 @@ export type Interactable = {
   // 樽・村人用。ぶつかると「攻撃力の書」「防御力の書」「体力の書」「ポーション」の
   // いずれかを手に入れる（battle/page.tsxの試練の塔にある宝箱アイテムと同じ考え方）。
   // どれも持ち物画面に貯まり、体力の書・ポーションは持ち物画面から使うと効果が出る
-  // （攻撃力・防御力の書はボス戦開始時にまとめて自動で効果が乗る）
-  grantsItem?: "attack" | "defense" | "hp" | "potion";
+  // （攻撃力・防御力の書はボス戦開始時にまとめて自動で効果が乗る）。
+  // "map"だけは効果を持たない特別枠で、手に入れるとメニューに「フィールドマップ」
+  // タブが出るようになるだけ（StoryGame.tsxのHOUSE_ELDER_POST_BOSS参照）
+  grantsItem?: "attack" | "defense" | "hp" | "potion" | "map";
   // grantsItem用。一度に何個渡すか（省略時は1個）。長老の家の裏の宝箱のように
   // 「ポーション2個」のようにまとめて渡したいときに使う
   grantsItemCount?: number;

@@ -37,11 +37,23 @@ import { Button } from "@/components/ui/8bit/button";
 import { CHAPTER1_FIELD_WORDS } from "../story/storyWords";
 import { CHAPTER1_WORD_DICTIONARY } from "../story/chapter1Data";
 import { writeStoryBattleResult } from "../story/useStoryState";
+import { StoryDialogue } from "../story/StoryDialogue";
+import type { DialoguePortrait } from "../story/types";
 import { api } from "@/lib/api";
 
+// バトルチュートリアルの説明も、村・フィールドの会話（StoryDialogue）と見た目を揃える。
+// コトが一人で解説する場面なので、井戸などと同じ「左にコトだけ」の構図にする
+const BATTLE_TUTORIAL_PORTRAITS: DialoguePortrait[] = [
+  { side: "left", name: "コト", image: "/images/kaiwa/kotodamanosei1.png" },
+];
+
 // 敵を倒したときに、まだ覚えていない言葉を低確率で見つけられる（アイテムと同じ
-// ノリの言葉ドロップ）。「ゆうき」はボス撃破の専用報酬なのでドロップ対象からは除く
+// ノリの言葉ドロップ）。「なまえ」はボス撃破の専用報酬なのでドロップ対象からは除く
 const WORD_DROP_CHANCE = 0.25;
+
+// チュートリアル戦の最初の敵に底上げするHP（spawnFloorEnemies参照）。
+// ボス（スライムキングHP260）と同程度にして、1〜2撃で倒されないようにする
+const TUTORIAL_ENEMY_MIN_HP = 300;
 
 // ストーリーモードの戦闘（フィールド雑魚・ボス共通）で使う設定。
 // 試練の塔のdifficulty[diffKey]とは別枠で、必要なフィールドだけ持たせてある。
@@ -160,6 +172,11 @@ type GetMessage = {
 type TreasureMessage = {
   type: ItemType;
   text: string;
+  // フロア最後の敵を倒した瞬間は、宝箱ゲットとその敵自身のdropsMagicが同時に
+  // 発生しうる。以前はそれぞれ別のポップアップ（GetMessage）が同時に出て、
+  // 後から描画される宝箱ポップアップに隠れて見えなくなっていたため、
+  // 敵のドロップ分はここにまとめて1つのポップアップで見せる
+  extraLines?: string[];
 };
 
 // useSearchParams()を使うコンポーネントはSuspenseで包む必要がある
@@ -180,6 +197,10 @@ function BattlePageContent() {
   const mode = searchParams.get("mode") || "practice";
   const encounter = searchParams.get("encounter") || "";
   const learnedWords = searchParams.get("words") || "";
+  // ストーリーモードのフィールド雑魚戦だけで使う、遭遇したゾーン（StoryGame.tsxの
+  // handleFieldStepがプレイヤー座標から判定して付けてくる）。指定が無ければ
+  // 「始まりの島」扱い（enemy.tsのstoryEnemies.chapter1.regular参照）
+  const zone = searchParams.get("zone") || "island";
   // ストーリーモードで最初に迎える戦闘（雑魚戦・ボス戦のどちらが先でも良い）かどうか。
   // StoryGame.tsxがstate.hasHadFirstBattleを見て、最初の1回だけ&tutorial=1を付けてくる
   const isTutorial = searchParams.get("tutorial") === "1";
@@ -210,6 +231,7 @@ function BattlePageContent() {
       initialMaxHp={initialMaxHp}
       isTutorial={isTutorial}
       chapter={chapter}
+      zone={zone}
     />
   );
 }
@@ -225,6 +247,7 @@ function BattleGame({
   initialMaxHp,
   isTutorial,
   chapter,
+  zone,
 }: {
   level: string;
   mode: string;
@@ -236,6 +259,7 @@ function BattleGame({
   initialMaxHp: number;
   isTutorial: boolean;
   chapter?: number;
+  zone: string;
 }) {
   // ストーリーモード（試練の塔とは別の、章仕立ての戦闘）かどうか
   const isStory = mode === "story";
@@ -247,6 +271,10 @@ function BattleGame({
   const config = isStory ? STORY_CONFIG : difficulty[diffKey];
 
   const enemyList = isStory ? storyEnemies.chapter1 : enemies[diffKey];
+  // ストーリーモードのフィールド雑魚戦だけ、ゾーンごとに出す雑魚のプールを変える
+  // （本土側はゴブリンも混じる。enemy.tsのmainlandRegular参照）
+  const storyRegularPool =
+    zone === "mainland" ? storyEnemies.chapter1.mainlandRegular : storyEnemies.chapter1.regular;
 
   // wordListはuseEffectの依存配列に使われるので、毎レンダー新しい配列を作らないようメモ化する。
   // これは「自分の攻撃フェーズ」で出す単語のプール。フィールド戦・ボス戦とも、
@@ -283,6 +311,11 @@ function BattleGame({
   // refの中身を描画中に直接読むとReactのlintルールに引っかかる（refはレンダーの
   // 外で読む前提のため）ので、勝利が決まった瞬間にstateへコピーしておく
   const [battleLearnedWordsSnapshot, setBattleLearnedWordsSnapshot] = useState<string[]>([]);
+  // 勝利演出でまとめて見せるための、この戦闘の最後の一撃で落ちた魔法（あれば）
+  const [battleMagicDropSnapshot, setBattleMagicDropSnapshot] = useState<{
+    name: string;
+    type: MagicType;
+  } | null>(null);
 
   // チュートリアル戦（isTutorial）でだけ使う、コトの説明ポップアップ。
   // Enterが押されるまでゲームを止める（treasureMessage等と同じ扱い。isPaused参照）。
@@ -447,7 +480,7 @@ function BattleGame({
 
     const count = getEnemyCountForFloor(targetFloor);
     const spawned: ActiveEnemy[] = [];
-    const regularPool = enemyList.regular;
+    const regularPool = isStory ? storyRegularPool : enemyList.regular;
 
     for (let i = 0; i < count; i++) {
       const template =
@@ -455,17 +488,27 @@ function BattleGame({
       const image =
         template.images[Math.floor(Math.random() * template.images.length)];
 
+      // 修正済み：チュートリアル戦の1階は敵が1体だけなので、通常のHPだと
+      // プレイヤーの1〜2撃で倒れてしまい、「黒い文字＝敵の攻撃」の説明を一度も
+      // 出せないまま次の階に進んでしまうことがあった（フロアクリア扱いになり、
+      // 敵の反撃ターンが来る前にstartNextRoundが早期returnするため）。
+      // isTutorialの最初の敵だけは必ず反撃を受けられるよう、HPをボス並みに
+      // 底上げし、攻撃間隔も1（次のラウンドで確実に攻撃してくる）にしている
+      const isTutorialSafetyNet = isTutorial && targetFloor === 1 && i === 0;
+      const hp = isTutorialSafetyNet ? TUTORIAL_ENEMY_MIN_HP : template.hp;
+      const attackInterval = isTutorialSafetyNet ? 1 : template.attackInterval;
+
       spawned.push({
         uid: enemyUidRef.current++,
         name: template.name,
         image,
-        maxHp: template.hp,
-        hp: template.hp,
+        maxHp: hp,
+        hp,
         score: template.score,
         attackDamage: getEnemyAttackDamage(config.enemyAttackDamage, targetFloor),
-        attackInterval: template.attackInterval,
+        attackInterval,
         // 湧いた直後は攻撃してこない。まずは自分のターンが一巡してから
-        turnsUntilAttack: template.attackInterval,
+        turnsUntilAttack: attackInterval,
         dropsMagic: template.dropsMagic,
         isBoss: false,
       });
@@ -509,7 +552,7 @@ function BattleGame({
       ...battleLearnedWordsRef.current,
     ]);
     const candidates = CHAPTER1_WORD_DICTIONARY.filter(
-      (w) => w.kana !== "ゆうき" && !alreadyKnown.has(w.kana)
+      (w) => w.kana !== "なまえ" && !alreadyKnown.has(w.kana)
     );
 
     if (candidates.length === 0) return;
@@ -522,8 +565,12 @@ function BattleGame({
   };
 
   // 階層が上がるたびに、宝箱から強化アイテムを1つもらう。
-  // Enterが押されるまでゲーム全体を止めておく（wordX・残り時間のカウントダウンを一時停止）
-  const grantTreasure = () => {
+  // Enterが押されるまでゲーム全体を止めておく（wordX・残り時間のカウントダウンを一時停止）。
+  // フロア最後の敵を倒した瞬間にその敵が魔法を落とした場合、以前は宝箱ポップアップとは
+  // 別に「魔法ゲット」ポップアップが同時に出て、後から描画される宝箱ポップアップに
+  // 隠れて見えなくなっていた。そのためmagicDropを受け取り、宝箱ポップアップの
+  // extraLinesにまとめて1つのポップアップで見せるようにしている
+  const grantTreasure = (magicDrop?: { name: string; type: MagicType } | null) => {
     const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
     let text = "";
 
@@ -563,7 +610,14 @@ function BattleGame({
         break;
     }
 
-    setTreasureMessage({ type, text });
+    const extraLines: string[] = [];
+
+    if (magicDrop) {
+      setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
+      extraLines.push(`${magicDrop.name}が${MAGIC_META[magicDrop.type].label}の魔法を落とした！`);
+    }
+
+    setTreasureMessage({ type, text, extraLines: extraLines.length > 0 ? extraLines : undefined });
   };
 
   // ゲーム開始時に1階の敵と最初の単語を用意する（最初は必ず自分の攻撃から）。
@@ -753,32 +807,41 @@ function BattleGame({
       setTimeLeft((prev) => prev + TIME_BONUS_PER_KILL * defeatedCount);
     }
 
-    if (drop) {
-      const d = drop as { name: string; type: MagicType };
-      showMagicDrop(d.name, d.type);
+    const tickedSurvivors = tickDown(survivors);
+    const isFloorClear = tickedSurvivors.length === 0;
+    const magicDrop = drop as { name: string; type: MagicType } | null;
+
+    // フロア/戦闘がこの一撃で終わる場合は、勝利演出（宝箱 or ストーリー勝利）側で
+    // まとめて見せるので、ここでは単独の「魔法ゲット」ポップアップを出さない
+    if (magicDrop && !isFloorClear) {
+      showMagicDrop(magicDrop.name, magicDrop.type);
     }
 
     if (defeatedCount > 0) tryDropWord();
 
-    const tickedSurvivors = tickDown(survivors);
-
     setActiveEnemies(tickedSurvivors);
 
-    if (tickedSurvivors.length === 0) {
+    if (isFloorClear) {
       if (isStory) {
+        if (magicDrop) {
+          setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
+        }
         setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
+        setBattleMagicDropSnapshot(magicDrop);
         setStoryBattleOver(true);
       } else {
         setPendingNextFloor(floor + 1);
-        grantTreasure();
+        grantTreasure(magicDrop);
       }
     }
 
     startNextRound(tickedSurvivors);
   };
 
-  // 自分の攻撃：単語を1つ打ち終えるたびに、即座にダメージを与える
-  const resolvePlayerAttack = (missCount: number, isTimeout: boolean) => {
+  // 自分の攻撃：単語を1つ打ち終えるたびに、即座にダメージを与える。
+  // debugForceDamageはデバッグ用の一撃必殺コマンド専用（handleKeyDownのF9参照）。
+  // 通常のプレイでは常にundefinedで、これまでどおりの威力計算になる
+  const resolvePlayerAttack = (missCount: number, isTimeout: boolean, debugForceDamage?: number) => {
     const front = activeEnemies[0];
 
     if (!front) return;
@@ -794,13 +857,16 @@ function BattleGame({
     );
 
     // 時間切れ（打ち切れなかった）ときはダメージを与えない
-    const damage = isTimeout
-      ? 0
-      : usedMagic && magicType === "fire"
-      ? Math.round(baseDamage * FIRE_DAMAGE_MULTIPLIER)
-      : isCrit
-      ? Math.round(baseDamage * CRIT_DAMAGE_MULTIPLIER)
-      : baseDamage;
+    const damage =
+      debugForceDamage !== undefined
+        ? debugForceDamage
+        : isTimeout
+        ? 0
+        : usedMagic && magicType === "fire"
+        ? Math.round(baseDamage * FIRE_DAMAGE_MULTIPLIER)
+        : isCrit
+        ? Math.round(baseDamage * CRIT_DAMAGE_MULTIPLIER)
+        : baseDamage;
 
     setPlayerAttacking(true);
     window.setTimeout(() => setPlayerAttacking(false), ATTACK_LUNGE_MS);
@@ -842,19 +908,31 @@ function BattleGame({
       setScore((prev) => prev + front.score);
       setTimeLeft((prev) => prev + TIME_BONUS_PER_KILL);
 
-      if (front.dropsMagic && (front.isBoss || Math.random() < MAGIC_DROP_CHANCE)) {
-        showMagicDrop(front.name, front.dropsMagic);
+      const isFloorClear = tickedRest.length === 0;
+      const magicDrop =
+        front.dropsMagic && (front.isBoss || Math.random() < MAGIC_DROP_CHANCE)
+          ? { name: front.name, type: front.dropsMagic }
+          : null;
+
+      // フロア/戦闘がこの一撃で終わる場合は、勝利演出（宝箱 or ストーリー勝利）側で
+      // まとめて見せるので、ここでは単独の「魔法ゲット」ポップアップを出さない
+      if (magicDrop && !isFloorClear) {
+        showMagicDrop(magicDrop.name, magicDrop.type);
       }
 
       tryDropWord();
 
-      if (tickedRest.length === 0) {
+      if (isFloorClear) {
         if (isStory) {
+          if (magicDrop) {
+            setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
+          }
           setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
+          setBattleMagicDropSnapshot(magicDrop);
           setStoryBattleOver(true);
         } else {
           setPendingNextFloor(floor + 1);
-          grantTreasure();
+          grantTreasure(magicDrop);
         }
 
         window.setTimeout(() => setDefeatingUid(null), DEFEAT_FADE_MS);
@@ -985,10 +1063,10 @@ function BattleGame({
       if (e.key === "Enter") {
         e.preventDefault();
 
-        if (tutorialMessage) {
-          setTutorialMessage(null);
-          return;
-        }
+        // チュートリアル説明中は、StoryDialogue自身がwindowのkeydownで
+        // Enterを拾って1行ずつ進める（onCompleteでsetTutorialMessage(null)）ので、
+        // ここでは何もしない（isPausedによりこの後の入力処理もスキップされる）
+        if (tutorialMessage) return;
 
         if (storyBattleOver) {
           // 勝った場合は、戦闘終了時点の実際のHPをそのまま次へ持ち越す
@@ -1017,6 +1095,19 @@ function BattleGame({
           setActiveEnemies(spawnFloorEnemies(nextFloor));
         }
       }
+      return;
+    }
+
+    // デバッグ用の隠しコマンド：F9で自分の攻撃ターン中の先頭の敵を即座に一撃で倒す。
+    // 通常の入力（1〜3キーやローマ字）とは無関係なキーなので、プレイに支障は無い。
+    // 防御ターン中（敵の攻撃中）は、defenseQueue側の集計とズレるため対象外にしている
+    if (e.key === "F9") {
+      e.preventDefault();
+
+      if (phase === "playerAttack" && activeEnemies[0]) {
+        resolvePlayerAttack(0, false, activeEnemies[0].hp);
+      }
+
       return;
     }
 
@@ -1254,24 +1345,16 @@ function BattleGame({
         )}
 
         {/*
-          チュートリアル戦（キングスライムとの初戦闘）でだけ出る、コトの説明ポップアップ。
-          treasureMessage等と同じくEnterが押されるまでゲームを止める
+          チュートリアル戦（キングスライムとの初戦闘）でだけ出る、コトの説明。
+          村・フィールドの会話と同じStoryDialogueを使い、画像＋テキストの会話形式で
+          1行ずつ進める（以前は全文を一度に出す独自ポップアップだった）
         */}
-        {tutorialMessage && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
-            <div className="bg-gray-900 border-4 border-cyan-300 rounded-xl px-10 py-6 text-center animate-battle-pop max-w-xl">
-              <p className="text-cyan-300 text-2xl font-bold mb-3">📖 コトのアドバイス</p>
-              <div className="space-y-1 mb-3">
-                {tutorialMessage.map((line, i) => (
-                  <p key={i} className="text-white text-lg">
-                    {line}
-                  </p>
-                ))}
-              </div>
-              <p className="text-white/70 text-sm">Enterキーで戦闘を再開</p>
-            </div>
-          </div>
-        )}
+        <StoryDialogue
+          open={tutorialMessage !== null}
+          lines={tutorialMessage ?? []}
+          portraits={BATTLE_TUTORIAL_PORTRAITS}
+          onComplete={() => setTutorialMessage(null)}
+        />
 
         {/*
           宝箱ゲット演出（Enterが押されるまでゲームは止まったまま）。
@@ -1290,6 +1373,11 @@ function BattleGame({
                 {ITEM_META[treasureMessage.type].label}
               </p>
               <p className="text-white text-lg mb-3">{treasureMessage.text}</p>
+              {treasureMessage.extraLines?.map((line) => (
+                <p key={line} className="text-cyan-300 text-base mb-1">
+                  {line}
+                </p>
+              ))}
               <p className="text-white/70 text-sm">
                 Enterキーで {pendingNextFloor ?? floor + 1}F へ
               </p>
@@ -1299,13 +1387,13 @@ function BattleGame({
 
         {/*
           ストーリー戦闘の勝利演出（Enterが押されるまで/storyへは戻らない）。
-          以前は戦闘中に言葉を見つけたときの演出（wordGetMessage）が数秒で自動的に
-          消えてしまい、倒した直後に勝利演出（同じ位置に重なって表示される）に
-          即座に隠されてしまうことがあった。この戦闘で見つけた言葉は勝利が決まった
-          瞬間にbattleLearnedWordsSnapshotへコピーしてあるので、それをここで一覧
-          表示することで「勝利」と「ゲットしたもの」を同じログにまとめている
-          （refの中身を描画中に直接読むとReactのlintルールに引っかかるため、
-          stateにコピーしたものを描画に使う）
+          以前は戦闘中に言葉を見つけたときの演出（wordGetMessage）や魔法ドロップの演出
+          （getMessage）が数秒で自動的に消えてしまい、倒した直後に勝利演出（同じ位置に
+          重なって表示される）に即座に隠されてしまうことがあった。この戦闘で見つけた
+          言葉・落ちた魔法は勝利が決まった瞬間にそれぞれstateへコピーしてあるので、
+          それをここで一覧表示することで「勝利」と「ゲットしたもの」を同じログに
+          まとめている（refの中身を描画中に直接読むとReactのlintルールに
+          引っかかるため、stateにコピーしたものを描画に使う）
         */}
         {storyBattleOver && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
@@ -1326,6 +1414,12 @@ function BattleGame({
                     );
                   })}
                 </div>
+              )}
+              {battleMagicDropSnapshot && (
+                <p className={cn("text-base mb-3", MAGIC_META[battleMagicDropSnapshot.type].wordColor)}>
+                  {MAGIC_META[battleMagicDropSnapshot.type].emoji}{" "}
+                  {battleMagicDropSnapshot.name}が{MAGIC_META[battleMagicDropSnapshot.type].label}の魔法を落とした！
+                </p>
               )}
               <p className="text-white/70 text-sm">Enterキーで戻る</p>
             </div>

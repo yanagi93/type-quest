@@ -2,7 +2,7 @@
 
 import { getWordPower } from "../battle/difficulty";
 import { cn } from "@/lib/utils";
-import type { CollectibleWord } from "./chapter1Data";
+import { WORD_EXCLUDED_FROM_COUNT, NAME_UNLOCK_WORD_KANA, type CollectibleWord } from "./chapter1Data";
 
 type WordCollectionProps = {
   dictionary: CollectibleWord[];
@@ -37,7 +37,7 @@ export function WordCollection({ dictionary, wordsLearned }: WordCollectionProps
                   <p className="text-xs text-yellow-400 mt-1">
                     威力 {getWordPower(word.kana)}
                   </p>
-                  {word.kana !== "はな" && (
+                  {word.kana !== WORD_EXCLUDED_FROM_COUNT && word.kana !== NAME_UNLOCK_WORD_KANA && (
                     <p className="text-[10px] text-cyan-400">★ 外に出る条件にカウントされる</p>
                   )}
                 </>

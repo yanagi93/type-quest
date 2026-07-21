@@ -8,6 +8,12 @@ import type { FloorTileType, GridMap, Interactable, PlacedObject } from "./types
 // 動き出しがカクつくため、自前のintervalで一定間隔で移動させる。
 const STEP_INTERVAL_MS = 140;
 const DEFAULT_TILE_SIZE = 48;
+// 主人公・歩き回るNPC（kind: "npc"）だけを上げて表示し、地面との間にわずかな
+// 浮き感＝立体感を出す演出。家や木など動かない置物には適用しない。
+// キャラの2割くらいが1つ上のマスにかかるように、タイルサイズの2割を上げ幅にする
+// （フィールドは村よりタイルが大きい＝FIELD_TILE_SIZE!==TOWN_TILE_SIZEなので、
+// 固定pxではなく実際のtileSizeから毎回計算する）
+const CHARACTER_LIFT_RATIO = 0.3;
 const DIRECTION_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const;
 type DirectionKey = (typeof DIRECTION_KEYS)[number];
 
@@ -203,6 +209,8 @@ export function GridExplorer({
   viewportWidth = DEFAULT_VIEWPORT_WIDTH,
   viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
 }: GridExplorerProps) {
+  const characterLiftPx = Math.round(tileSize * CHARACTER_LIFT_RATIO);
+
   // 縁タイルの解決はマップ全体ぶん（数千マス）を毎回計算するのは無駄なので、
   // floorTexturesの参照が変わったとき（マップ・シーン切り替え時）だけ計算し直す
   const resolvedFloorImages = useMemo(
@@ -424,7 +432,7 @@ export function GridExplorer({
     const w = interactable.widthTiles * tileSize;
     const h = interactable.heightTiles * tileSize;
     const left = (interactable.x + 0.5) * tileSize - w / 2;
-    const top = (interactable.y + 1) * tileSize - h;
+    const top = (interactable.y + 1) * tileSize - h - (interactable.kind === "npc" ? characterLiftPx : 0);
 
     if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
 
@@ -586,7 +594,7 @@ export function GridExplorer({
             className="absolute flex items-center justify-center text-2xl ease-linear"
             style={{
               left: interactable.x * tileSize,
-              top: interactable.y * tileSize,
+              top: interactable.y * tileSize - (interactable.kind === "npc" ? characterLiftPx : 0),
               width: tileSize,
               height: tileSize,
               transitionProperty: "left, top",
@@ -646,7 +654,7 @@ export function GridExplorer({
         className="absolute pointer-events-none select-none ease-linear"
         style={{
           left: playerPos.x * tileSize,
-          top: playerPos.y * tileSize,
+          top: playerPos.y * tileSize - characterLiftPx,
           width: tileSize,
           height: tileSize,
           zIndex: playerPos.y * 2 + 1,

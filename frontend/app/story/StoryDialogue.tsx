@@ -73,6 +73,14 @@ export function StoryDialogue({ open, lines, onComplete, title, portraits, backg
       if (event.key !== "Enter") return;
 
       event.preventDefault();
+
+      // 修正済みのバグ：キーリピート（Enterを押しっぱなしにしたときの連続keydown）を
+      // 無視していなかったため、直前の画面（勝利画面など）でEnterを押した勢いが
+      // 次画面のダイアログにまで引き継がれ、複数行が一気に進んで最後まで
+      // 自動で終わってしまうことがあった（エンディングが「一瞬表示されて消える」
+      // ように見えていた原因）。GridExplorer.tsxの移動キー処理と同じくrepeatは無視する
+      if (event.repeat) return;
+
       advance();
     };
 

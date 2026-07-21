@@ -39,6 +39,10 @@ export type Chapter1State = {
   // 一度でも戦闘（雑魚戦・ボス戦問わず）を経験したか。falseの間だけ、次に入る戦闘へ
   // &tutorial=1を付けてコトの操作説明を出す（StoryGame.tsxのhandleBump/handleFieldStep参照）
   hasHadFirstBattle: boolean;
+  // 村を出る前に、出口の前にいる謎の少年（stranger）に話しかけたか。falseの間は
+  // 村の門でコトに止められて外に出られない（StoryGame.tsxのhandleBump参照）。
+  // ボス撃破後は少年自体が村からいなくなるので、以後この値は意味を持たなくなる
+  hasMetStranger: boolean;
   chestsOpened: string[]; // 開けた宝箱のid（同じ宝箱から二度もらえないようにする）
   attackBooks: number; // 宝箱で手に入れた攻撃力の書の数
   defenseBooks: number; // 宝箱で手に入れた防御力の書の数
@@ -53,6 +57,18 @@ export type Chapter1State = {
   // 言霊の書に記録した「旅の記憶」。セーブするたびに1行ずつ増えていく、
   // ゲームの進行には影響しないただの記録（プレイヤー向けの読み物）
   journalEntries: string[];
+  // 「はな」を覚えた直後の名づけイベントで決めた、プレイヤー自身の名前。
+  // 未設定の間は空文字（StoryGame.tsxのhandleBump参照）
+  playerName: string;
+  // 「なまえ」を覚えた後、村人（kind:"npc"）に付けた名前。interactableのidをキーにする。
+  // 名づけるか・つけずにランダムな名前にするかを選べ、一度決めたら固定される。
+  // ここに入る名前はどちらもタイピングゲームの単語プールには一切使わない
+  // （プレイヤーが短い名前を選ぶだけで有利になってしまうのを避けるため）
+  npcNames: Record<string, string>;
+  // 名づけミッション（村人全員に名前をつける）を完了し、始まりの島↔本土の橋が
+  // 架かったかどうか。trueになるとFIELD_MAPの(113,10)/(113,11)が歩けるようになる
+  // （StoryGame.tsxのbuildFieldMap呼び出し、chapter1Data.tsのFIELD_BRIDGE_TILES参照）
+  bridgeBuilt: boolean;
 };
 
 const STORAGE_KEY = "storyProgress";
@@ -65,6 +81,7 @@ const DEFAULT_STATE: Chapter1State = {
   wordsLearned: [],
   bossDefeated: false,
   hasHadFirstBattle: false,
+  hasMetStranger: false,
   chestsOpened: [],
   attackBooks: 0,
   defenseBooks: 0,
@@ -73,6 +90,9 @@ const DEFAULT_STATE: Chapter1State = {
   playerHp: DEFAULT_MAX_HP,
   maxPlayerHp: DEFAULT_MAX_HP,
   journalEntries: [],
+  playerName: "",
+  npcNames: {},
+  bridgeBuilt: false,
 };
 
 // ============================================================
@@ -198,6 +218,16 @@ export function useStoryState() {
   // ことで、マウント直後から常に正しい状態になるようにした
   const [state, setState] = useState<Chapter1State>(() => loadSlotState("auto"));
   const isLoggedInRef = useRef(false);
+  // 修正済みのバグ：ログイン確認〜サーバーの進行状況取得（api.me→api.getProgress）は
+  // 非同期なので、その応答が返ってくるまでの間にローカル側で更新（update/learnWord）が
+  // 1回でも起きていたら、そのローカルの変更のほうが必ず新しい。にもかかわらず、応答が
+  // 返ってきた時点で無条件にsetState(merged)していたため、/battleから戻ってボス撃破結果
+  // （scene:"ending"・bossDefeated・なまえ習得など）をローカルへ反映した直後に、まだ
+  // その反映がサーバーへ送信・保存される前のサーバー側の古い進行状況で上書きしてしまう
+  // ことがあった（エンディングが一瞬表示されてすぐフィールドに戻る、なまえが消えて
+  // 見えるように見えた原因）。ローカルで何か更新があった後は、このマウント中の
+  // サーバー同期を諦める（＝ローカルを正として扱う）ことで防いでいる
+  const hasLocalChangeRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,7 +242,7 @@ export function useStoryState() {
         try {
           const { state: remoteState } = await api.getProgress<Chapter1State>(CHAPTER_ID);
 
-          if (cancelled) return;
+          if (cancelled || hasLocalChangeRef.current) return;
 
           const merged = { ...DEFAULT_STATE, ...remoteState };
 
@@ -236,6 +266,7 @@ export function useStoryState() {
   // localStorageのautoスロットへ即保存しつつ、ログイン中はバックエンドへも送る
   // 共通ヘルパー（自動セーブ。手動セーブのslot1〜3はsaveToSlotで別途行う）
   const persist = useCallback((next: Chapter1State) => {
+    hasLocalChangeRef.current = true;
     writeSlotState("auto", next);
 
     if (isLoggedInRef.current) {
@@ -274,7 +305,7 @@ export function useStoryState() {
   // （関数名・state名は元の「宝箱」のままだが、見た目は村の樽や村人からの贈り物に
   // 差し替えてある）。どれも持ち物に貯まるだけで、体力の書・ポーションは持ち物画面
   // から使うまで効果が出ない（useHpBook/usePotion参照）。同じidからは一度しかもらえない
-  const openChest = useCallback((chestId: string, item: "attack" | "defense" | "hp" | "potion", count = 1) => {
+  const openChest = useCallback((chestId: string, item: "attack" | "defense" | "hp" | "potion" | "map", count = 1) => {
     setState((prev) => {
       if (prev.chestsOpened.includes(chestId)) return prev;
 

@@ -175,11 +175,17 @@ export const enemies = {
 } as const;
 
 // ストーリーモード第1章専用の敵。試練の塔のenemiesとは別枠で管理する。
-// regular（フィールドの雑魚）は既存のスライム・ゴブリンをそのまま再利用。
+// regular（フィールドの雑魚）は既存のスライムをそのまま再利用。
+// 第1章で実際に歩き回れる野外は現状「始まりの島」だけなので、そこはスライムのみ出現
+// させる（ゴブリンは以前入っていたが、本土側の敵として後で分けて出す想定に変更）。
 // boss（スライムキング）はスライムの画像を流用したプレースホルダー（専用グラフィックは後で差し替え予定）。
 export const storyEnemies = {
   chapter1: {
-    regular: [enemies.easy.regular[0], enemies.easy.boss[0]],
+    regular: [enemies.easy.regular[0]],
+    // 橋を渡った本土側だけ、スライムに加えてゴブリンも出現する（ゾーン別モンスター
+    // 出現の第一弾。ゴブリンは元々ここに入っていたが、本土専用に分ける想定でいったん
+    // 抜いてあった経緯があるので、そのままeasy.bossのゴブリンを流用している）
+    mainlandRegular: [enemies.easy.regular[0], enemies.easy.boss[0]],
     boss: [
       {
         id: 100,

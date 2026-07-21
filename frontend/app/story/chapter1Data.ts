@@ -28,16 +28,20 @@ const TOWN_GRID_HEIGHT = 45;
 // ボスに挑めるようになる条件（覚えた単語の数）。村の門のセリフでも使うので、
 // 先に定義しておく。
 //
-// 以前は「みず・ひ・かぜ」の3つだけを「必須の言葉」として数えていたが、
-// 「別の言葉でもいいことにしたい（ねこ・いぬ等でもOK）」という要望を受けて、
-// 「はな」以外の覚えた言葉を何個持っているか、という数え方に変更した
-// （はなは最初に必ず手に入る言葉なので、これ自体はノーカウントにして、
-// 「はなを覚えたら、そこからさらに3つ集めよう」という導線にしている）。
+// 「はな」以外の覚えた言葉ならなんでもカウントする（ねこ・いぬ等でもOK）方式。
+// はなは最初に必ず手に入る言葉なので、これ自体はノーカウントにして、
+// 「はなを覚えたら、そこからさらに3つ集めよう」という導線にしている。
 // 実際の数え方はStoryGame.tsxのcountRequiredWordsLearnedを参照。
 export const BOSS_UNLOCK_WORD_COUNT = 3;
 
 // 花以外は数えない、という判定に使う（StoryGame.tsx側と両方から参照する）
 export const WORD_EXCLUDED_FROM_COUNT = "はな";
+
+// これを覚えると村人（kind:"npc"）に名前をつけられるようになる、ボス撃破専用の報酬。
+// 「ボスを倒さないと手に入らない言葉がボスを倒す条件になる」という矛盾を避けるため、
+// WORD_EXCLUDED_FROM_COUNT（はな）と同じく、ボス解放条件のカウント対象から除外する
+// （StoryGame.tsxのcountRequiredWordsLearned・WordCollection.tsxの両方から参照する）
+export const NAME_UNLOCK_WORD_KANA = "なまえ";
 
 export const TOWN_INTERACTABLES: Interactable[] = [
   {
@@ -528,6 +532,33 @@ export const TOWN_INTERACTABLES: Interactable[] = [
   },
 ];
 
+// ボス撃破後だけ、TOWN_INTERACTABLES内のhouse-elderの代わりにこちらを使う
+// （StoryGame.tsxのtownInteractables参照）。x/y/画像などは元のhouse-elderと同じ、
+// idも同じ"house-elder"のまま（npcNames・chestsOpenedのキーを揃えるため）にして、
+// 長老が実際にそこにいる体・世界の地図を渡す・名づけられる、という3点だけを変える。
+// 名づけミッション（8.2節）は以前「村人全員」が対象だったが、「全員は時間がかかる」
+// という指摘を受け、長老1人に名前をつけたら完了する形に変更した（NAMEABLE_NPC_IDS参照）
+export const HOUSE_ELDER_POST_BOSS: Interactable = {
+  id: "house-elder",
+  x: 22,
+  y: 7,
+  kind: "npc",
+  label: "",
+  image: "/images/map/okimono/ie.png",
+  widthTiles: 6,
+  heightTiles: 6,
+  collisionWidthTiles: 6,
+  collisionHeightTiles: 3,
+  interactionX: 21,
+  interactionY: 7,
+  grantsItem: "map",
+  dialogue: [
+    "長老の家に入ると、机の前で長老がじっとこちらを見ていた。",
+    "長老「おお……戻ってきたか。キングスライムを倒したようじゃな。」",
+    "長老「よくやった。これを持っていきなさい。」",
+  ],
+};
+
 // ============================================================
 // 村を歩き回るNPC（村人・猫・犬）の置き方 ガイド
 // ============================================================
@@ -648,13 +679,6 @@ export const TOWN_WANDERERS: WandererDefinition[] = [
     ],
   },
 ];
-
-// 「ちからもち」を教えてくれる村人はまだ配置しない（全体マップの作り込みが
-// 終わってから、どこに置くか決める）。言葉の判定・岩どかしパズルの仕組み自体
-// （FIELD_STRENGTH_PUZZLE_WORD/FIELD_STRENGTH_PUZZLE_ROCK_ID、StoryGame.tsxの
-// フィルタ処理）はすでに動くようになっているので、教える場所を決めたら
-// teachesWord: { kana: "ちからもち", kanji: "力持ち" } を持つNPC/置物を
-// 1つ追加するだけでよい
 
 // ============================================================
 // 見た目だけの置物（木・花・柵・石など）
@@ -1114,6 +1138,21 @@ export const FIELD_TOWN_ENTRANCE: Interactable = {
   dialogue: ["村の門をくぐり、中へ戻った。"],
 };
 
+// 始まりの島でのフィールド開始位置(FIELD_MAP.start)のすぐ北にある置物テント
+// （tent-46、x=123,y=7。FIELD_OBJECTS参照）を、村へ戻る入り口として使う。
+// テント自体はただの置物（PlacedObject）のままなので見た目はそちらに任せ、
+// ここではimageを持たない当たり判定だけのInteractableを同じマスに重ねている
+// （labelも空にして、テントの絵の上に絵文字が二重に表示されないようにしてある）
+export const FIELD_TENT_TOWN_ENTRANCE: Interactable = {
+  id: "field-tent-town-entrance",
+  x: 123,
+  y: 7,
+  kind: "exit",
+  label: "",
+  exitsTo: "town",
+  dialogue: ["テントをくぐり、村の中へ戻った。"],
+};
+
 // 村の門を出てすぐ戦闘になるチュートリアル方式はやめ、キングスライムを再び
 // フィールド上に実際に立たせる形に戻した。北東の始まりの島、木立の切れ目
 // （(115,10)〜(115,11)の縦2マス、tree-double-obj-27/29とtree-double-obj-31/33の
@@ -1145,15 +1184,24 @@ export const FIELD_BOSS: Interactable[] = [
   },
 ];
 
+// ボス撃破後にFIELD_INTERACTABLESから除外するためのID一覧
+// （StoryGame.tsxのfieldInteractables参照。FIELD_STRENGTH_PUZZLE_ROCK_IDと同じやり方）
+export const FIELD_BOSS_IDS = FIELD_BOSS.map((i) => i.id);
+
 // ============================================================
 // 他の章の本拠地への「行き先」だけ見える目印
 // ============================================================
 export const FIELD_LANDMARKS: Interactable[] = [
+  // 第2章「砂漠の町（隣の町）」への入り口。本土の砂地（floorAccentTanSpeckle）が
+  // 広がる一帯のちょうど真ん中(87,19)〜(87,20)の縦2マスに配置している
+  // （GridExplorer.tsxのぶつかり判定はinteractionX/Yを1マスずつしか見ないため、
+  // FIELD_BOSSと同じくInteractableを2つ用意し、どちらにぶつかっても同じ入口として
+  // 扱う）。この一帯はもともと壁で塞がれていない開けた土地なので、
+  // chapter1Data.ts側で当たり判定・床の見た目を作り変える必要は無い
   {
-    // ユーザーが置いたピラミッド(icon_pyramid.png, x=42,y=5)のすぐそばに配置
-    id: "desert-town-entrance",
-    x: 42,
-    y: 7,
+    id: "desert-town-entrance-1",
+    x: 87,
+    y: 19,
     kind: "exit",
     exitsTo: "desertTown",
     label: "",
@@ -1161,7 +1209,22 @@ export const FIELD_LANDMARKS: Interactable[] = [
     widthTiles: 1,
     heightTiles: 2,
     dialogue: [
-      "島の奥に、砂に埋もれかけた町の城壁が見える。",
+      "砂地の真ん中に、砂に埋もれかけた町の城壁が見える。",
+      "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
+      "コト「入ってみよう！」",
+    ],
+  },
+  {
+    // 見た目（castle_desert_town.pngのheightTiles:2）は上のentrance-1側でまとめて
+    // 表示されるので、こちらは当たり判定だけの目印（画像なし）
+    id: "desert-town-entrance-2",
+    x: 87,
+    y: 20,
+    kind: "exit",
+    exitsTo: "desertTown",
+    label: "",
+    dialogue: [
+      "砂地の真ん中に、砂に埋もれかけた町の城壁が見える。",
       "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
       "コト「入ってみよう！」",
     ],
@@ -1181,13 +1244,21 @@ export const FIELD_LANDMARKS: Interactable[] = [
   },
 ];
 
+// メニューのフィールドマップ（黄色いリング）用に、FIELD_LANDMARKS内の
+// desert-town-entrance-1の座標だけ単独で取り出しておく（StoryGame.tsxのgetFieldObjective参照）
+export const DESERT_TOWN_ENTRANCE_POS = { x: 87, y: 19 };
+
 // 「ちからもち」の言霊で解ける、最初の謎解き。まだ言葉を知らない間は
 // FIELD_STRENGTH_PUZZLE_ROCK_IDの岩がただの行き止まりだが、言葉を覚えていると
 // （StoryGame.tsxがwordsLearnedを見て、この岩のIDだけをinteractablesから動的に
 // 除外する。岩自体のデータやhandleBumpは変えていない）岩が消えて奥の宝箱まで
 // 歩けるようになる。
 // 岩の周りを壁で囲ってはいない（マップエディタのデータに無いものは足さない方針のため）。
-// 岩1マスだけが道をふさいでいる形で、迂回すれば別方向から宝箱に近づける
+// 岩1マスだけが道をふさいでいる形で、迂回すれば別方向から宝箱に近づける。
+// 修正済み：「ちからもち」を教えていたwanderer-strong（村を歩き回る力自慢の村人）を
+// 削除したため、この単語自体はもう入手できない。岩は永久に消えなくなるが、上記の
+// とおり迂回すれば宝箱には問題なくたどり着けるので、詰み（宝箱が一生取れない）には
+// ならない
 export const FIELD_STRENGTH_PUZZLE_WORD = "ちからもち";
 export const FIELD_STRENGTH_PUZZLE_ROCK_ID = "field-strength-puzzle-rock";
 
@@ -1222,6 +1293,7 @@ const FIELD_STRENGTH_PUZZLE: Interactable[] = [
 
 export const FIELD_INTERACTABLES: Interactable[] = [
   FIELD_TOWN_ENTRANCE,
+  FIELD_TENT_TOWN_ENTRANCE,
   ...FIELD_BOSS,
   ...FIELD_LANDMARKS,
   ...FIELD_STRENGTH_PUZZLE,
@@ -1250,12 +1322,15 @@ export const FIELD_INTERACTABLES: Interactable[] = [
 // 砂丘(dune-*)はすべてblocksMovement: trueにしてあり、歩けない壁として扱う
 //
 // 始まりの島（北東の森の陸地。ユーザー確定）とは別に、船なしでは行けない陸地が複数ある：
-//   - 本土（鍛冶屋の集落・ピラミッド・魔法の森を見晴らす場所・岩どかしパズルを含む）
+//   - 本土（鍛冶屋の集落・ピラミッド・魔法の森を見晴らす場所・岩どかしパズルを含む）。
+//     ただし名づけミッション完了後は例外で、(113,10)/(113,11)のFIELD_BRIDGE_TILES
+//     （始まりの島の西端(114,10-11)と本土側(112,10-11)の間、幅1マスの海峡）が
+//     床に変わり、歩いて渡れるようになる（8.2節、buildFieldMap参照）
 //   - 南東の陸地（x=101〜127, y=67〜90あたり）：ユーザーが置いたcastle-base（x=115,y=77）
 //     と山肌(ユーザー配置分)がある。ユーザー確定で「魔王大陸」
 //   - 南西の小さな陸地（x=6〜20, y=82〜93あたり）：塔が3本並んでいる。ユーザー確定で「聖なる島」
-// これらは今回は歩いて行けないままにしてある（配置は変えていない）。将来「船」や
-// 「虹の橋」的な仕組みを実装するときの行き先候補として、座標だけ記録しておく
+// 魔王大陸・聖なる島は今回も歩いて行けないままにしてある（配置は変えていない）。将来
+// 「船」的な仕組みを実装するときの行き先候補として、座標だけ記録しておく
 // ============================================================
 const FIELD_FLOOR_ROWS: string[] = [
   "~~~~~~~~~~~~~~~~~~~~~~TTTTTTTTT~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
@@ -2690,8 +2765,9 @@ export const FIELD_OBJECTS: PlacedObject[] = [
 
 // フィールドの当たり判定。海（FIELD_WALL_ROWS由来）はそのまま歩けない壁にし、
 // blocksMovement: trueの置物が乗っているマスも壁にする（村のような footprint 全体
-// ではなく、置物の基準点1マスだけを塞ぐ簡易版。以前からのフィールド側の仕様のまま）
-function buildFieldTiles(): GridMap["tiles"] {
+// ではなく、置物の基準点1マスだけを塞ぐ簡易版。以前からのフィールド側の仕様のまま）。
+// bridgeBuiltがtrueのときだけ、FIELD_BRIDGE_TILESを壁から床に変える
+function buildFieldTiles(bridgeBuilt: boolean): GridMap["tiles"] {
   const tiles = FIELD_BASE_TILES.map((row) => row.slice());
 
   for (const object of FIELD_OBJECTS) {
@@ -2700,15 +2776,63 @@ function buildFieldTiles(): GridMap["tiles"] {
     tiles[object.y][object.x] = "wall";
   }
 
+  if (bridgeBuilt) {
+    for (const { x, y } of FIELD_BRIDGE_TILES) {
+      tiles[y][x] = "floor";
+    }
+  }
+
   return tiles;
 }
 
+// 名づけミッション（全員に名前をつける。DESIGN.md 8.2節）を完了すると、言霊の力で
+// 始まりの島↔本土をつなぐ橋が架かる、という演出。地形的にちょうど1マス幅の海峡に
+// なっている(113,10)〜(113,11)（始まりの島の西端(114,10-11)と、本土側の陸地
+// (112,10-11)の間）を床に変えるだけで橋になる。見た目はFIELD_BRIDGE_OBJECTSの
+// 「木箱A」の画像を橋として流用する（専用グラフィックが無いための仮の置物）
+const FIELD_BRIDGE_TILES = [
+  { x: 113, y: 10 },
+  { x: 113, y: 11 },
+];
+
+export const FIELD_BRIDGE_OBJECTS: PlacedObject[] = [
+  {
+    id: "field-bridge",
+    image: "/images/map/okimono/tileset/icon_crate_a.png",
+    x: 113,
+    y: 10,
+    widthTiles: 1,
+    heightTiles: 2,
+    groundLevel: true,
+  },
+];
+
 // フィールドの開始位置は、始まりの島（北東の森の陸地。ユーザー確定）の中、
-// 既に置かれていたentrance-bの目印（x=110,y=4）のすぐ南
+// FIELD_TENT_TOWN_ENTRANCE（置物テントtent-46、x=123,y=7）のすぐ南。
+// 村を出るとここに降り立ち、北のテントに触れると村へ戻れる、という一往復にしてある
+export const FIELD_START = { x: 123, y: 8 };
+
+// 始まりの島と本土の境目のx座標（FIELD_BRIDGE_TILESの橋=x:113と揃えてある）。
+// 橋より東（x >= この値）が始まりの島、西（x < この値）が本土。
+// ゾーン別モンスター出現（StoryGame.tsxのhandleFieldStep、enemy.tsのmainlandRegular）
+// の判定に使う
+export const FIELD_MAINLAND_BOUNDARY_X = 113;
+
+// MapEditor.tsx等、橋の有無を気にしない用途向けに「橋がまだ架かっていない」
+// デフォルト状態を静的にも公開しておく。ゲーム内の実際の表示（bridgeBuiltを反映した
+// もの）はbuildFieldMap/buildFieldObjectsを使うこと（StoryGame.tsx参照）
 export const FIELD_MAP: GridMap = {
-  tiles: buildFieldTiles(),
-  start: { x: 110, y: 5 },
+  tiles: buildFieldTiles(false),
+  start: FIELD_START,
 };
+
+export function buildFieldMap(bridgeBuilt: boolean): GridMap {
+  return { tiles: buildFieldTiles(bridgeBuilt), start: FIELD_START };
+}
+
+export function buildFieldObjects(bridgeBuilt: boolean): PlacedObject[] {
+  return bridgeBuilt ? [...FIELD_OBJECTS, ...FIELD_BRIDGE_OBJECTS] : FIELD_OBJECTS;
+}
 
 // 第1章で手に入る可能性のある言霊（言葉）の一覧。
 // state.wordsLearned にはkana（読み）だけが入っているので、
@@ -2733,7 +2857,24 @@ export const CHAPTER1_WORD_DICTIONARY: CollectibleWord[] = [
   { kana: "いし", kanji: "石", hint: "村の北東に積まれた石の山" },
   { kana: "はな", kanji: "花", hint: "村に咲いている花" },
   { kana: "くさ", kanji: "草", hint: "生い茂った草むら（未実装）" },
-  { kana: "ゆうき", kanji: "勇気", hint: "スライムキングを倒す" },
+  { kana: "なまえ", kanji: "名前", hint: "スライムキングを倒す" },
   { kana: "もり", kanji: "森", hint: "砂漠の町の旅人" },
-  { kana: "ちからもち", kanji: "力持ち", hint: "村の力自慢の村人（未実装）" },
+];
+
+// 「なまえ」を覚えた後、プレイヤー自身・村人に名前をつけずにいた場合にランダムで
+// 割り当てる名前の候補。プレイヤーが入力する名前と同じく、これらはタイピングゲームの
+// 単語プールには一切使わない（表示専用の文字列。StoryGame.tsxのpickRandomName参照）
+export const RANDOM_NAME_POOL = [
+  "タロウ",
+  "ハナコ",
+  "ケンジ",
+  "ミサキ",
+  "ユウタ",
+  "サクラ",
+  "ダイキ",
+  "アカリ",
+  "ソウタ",
+  "ノゾミ",
+  "カイト",
+  "ツムギ",
 ];
