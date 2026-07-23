@@ -279,7 +279,9 @@
       "Bash(wsl.exe -e bash -lc 'cd /home/user/repositories/pachimon/backend && npm install --no-save ws >/dev/null 2>&1 && node -e \" *)",
       "Bash(wsl.exe -e bash -lc \"kill \\\\$\\(cat /tmp/playerA.pid\\) 2>/dev/null; rm -f /tmp/playerA.pid; echo done\")",
       "Bash(wsl.exe -e bash -lc \"docker logs pachimon-backend 2>&1 | grep -v healthz | tail -40\")",
-      "Bash(wsl.exe -e bash -lc \"cd /home/user/repositories/pachimon && docker compose up -d --build frontend 2>&1 | tail -30\")"
+      "Bash(wsl.exe -e bash -lc \"cd /home/user/repositories/pachimon && docker compose up -d --build frontend 2>&1 | tail -30\")",
+      "Bash(rm \"frontend/public/images/back-ground/Gemini_Generated_Image_qmjd38qmjd38qmjd.png:Zone.Identifier\")",
+      "Bash(rm \"public/images/back-ground/Gemini_Generated_Image_qmjd38qmjd38qmjd.png:Zone.Identifier\" && echo \"deleted\")"
     ]
   }
 }
