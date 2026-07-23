@@ -109,6 +109,11 @@ export const FIRE_DAMAGE_MULTIPLIER = 2;
 export const ICE_SLOW_WORD_COUNT = 3;
 export const ICE_SLOW_SPEED_MULTIPLIER = 0.4;
 
+// 防具（鉄の鎧、chapter2Data.tsのARMOR_TIERS参照）の「敵の言葉がゆっくり流れる」
+// 効果用。氷魔法（ICE_SLOW_SPEED_MULTIPLIER=0.4）は3単語だけの一時的な強い効果なのに対し、
+// こちらは戦闘中ずっと効く永続効果なので、それより控えめな倍率にしてある
+export const ARMOR_SLOW_SPEED_MULTIPLIER = 0.7;
+
 // 単語を文字数（かなの読み）で5段階に分類する
 // 短(2〜3) / 中(4〜5) / ちょい長(6〜7) / 長(8〜9) / 超長(10〜)
 export type LengthTier = "short" | "medium" | "longish" | "long" | "extreme";

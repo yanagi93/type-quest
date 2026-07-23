@@ -52,6 +52,9 @@ type MenuProps = {
   // ステータスタブ
   playerHp: number;
   maxPlayerHp: number;
+  gold: number;
+  weaponTier: number;
+  armorTier: number;
   requiredLearnedCount: number;
   bossUnlockWordCount: number;
 
@@ -83,6 +86,9 @@ export function Menu({
   onUsePotion,
   playerHp,
   maxPlayerHp,
+  gold,
+  weaponTier,
+  armorTier,
   requiredLearnedCount,
   bossUnlockWordCount,
   hasFieldMap,
@@ -150,8 +156,11 @@ export function Menu({
           <Status
             playerHp={playerHp}
             maxPlayerHp={maxPlayerHp}
+            gold={gold}
             attackBooks={attackBooks}
             defenseBooks={defenseBooks}
+            weaponTier={weaponTier}
+            armorTier={armorTier}
             wordsLearnedCount={wordsLearned.length}
             wordDictionaryCount={wordDictionary.length}
             requiredLearnedCount={requiredLearnedCount}

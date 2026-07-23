@@ -1193,39 +1193,43 @@ export const FIELD_BOSS_IDS = FIELD_BOSS.map((i) => i.id);
 // ============================================================
 export const FIELD_LANDMARKS: Interactable[] = [
   // 第2章「砂漠の町（隣の町）」への入り口。本土の砂地（floorAccentTanSpeckle）が
-  // 広がる一帯のちょうど真ん中(87,19)〜(87,20)の縦2マスに配置している
-  // （GridExplorer.tsxのぶつかり判定はinteractionX/Yを1マスずつしか見ないため、
-  // FIELD_BOSSと同じくInteractableを2つ用意し、どちらにぶつかっても同じ入口として
-  // 扱う）。この一帯はもともと壁で塞がれていない開けた土地なので、
-  // chapter1Data.ts側で当たり判定・床の見た目を作り変える必要は無い
+  // 広がる一帯にぽつんと立つテント（旧tent-155。ただの飾りだったものをこの入り口に
+  // 転用したので、FIELD_OBJECTS側の同じ場所にあった飾りテントは削除した）を目印にする。
+  // 修正済み：以前は城壁（castle_desert_town.png）だったが、「砂漠の町に城で入るのは
+  // 不自然、近くにあるテントを入り口にしたい」という指摘を受けてテントに差し替えた。
+  // (88,19)〜(88,20)の縦2マスに配置している（GridExplorer.tsxのぶつかり判定は
+  // interactionX/Yを1マスずつしか見ないため、FIELD_BOSSと同じくInteractableを2つ
+  // 用意し、どちらにぶつかっても同じ入口として扱う）。この一帯はもともと壁で
+  // 塞がれていない開けた土地なので、chapter1Data.ts側で当たり判定・床の見た目を
+  // 作り変える必要は無い
   {
     id: "desert-town-entrance-1",
-    x: 87,
-    y: 19,
-    kind: "exit",
-    exitsTo: "desertTown",
-    label: "",
-    image: "/images/map/okimono/tileset/castle_desert_town.png",
-    widthTiles: 1,
-    heightTiles: 2,
-    dialogue: [
-      "砂地の真ん中に、砂に埋もれかけた町の城壁が見える。",
-      "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
-      "コト「入ってみよう！」",
-    ],
-  },
-  {
-    // 見た目（castle_desert_town.pngのheightTiles:2）は上のentrance-1側でまとめて
-    // 表示されるので、こちらは当たり判定だけの目印（画像なし）
-    id: "desert-town-entrance-2",
-    x: 87,
+    x: 88,
     y: 20,
     kind: "exit",
     exitsTo: "desertTown",
     label: "",
+    image: "/images/map/okimono/tileset/icon_tent.png",
+    widthTiles: 2,
+    heightTiles: 2,
     dialogue: [
-      "砂地の真ん中に、砂に埋もれかけた町の城壁が見える。",
-      "コト「あれが噂の『砂漠の町』かな……武器屋や防具屋があるらしいよ。」",
+      "砂地の真ん中に、ぽつんとテントが立っている。",
+      "コト「あれが噂の『砂漠の町』の入り口かな……武器屋や防具屋があるらしいよ。」",
+      "コト「入ってみよう！」",
+    ],
+  },
+  {
+    // 見た目（icon_tent.pngのheightTiles:2）は上のentrance-1側でまとめて
+    // 表示されるので、こちらは当たり判定だけの目印（画像なし）
+    id: "desert-town-entrance-2",
+    x: 88,
+    y: 19,
+    kind: "exit",
+    exitsTo: "desertTown",
+    label: "",
+    dialogue: [
+      "砂地の真ん中に、ぽつんとテントが立っている。",
+      "コト「あれが噂の『砂漠の町』の入り口かな……武器屋や防具屋があるらしいよ。」",
       "コト「入ってみよう！」",
     ],
   },
@@ -1246,7 +1250,7 @@ export const FIELD_LANDMARKS: Interactable[] = [
 
 // メニューのフィールドマップ（黄色いリング）用に、FIELD_LANDMARKS内の
 // desert-town-entrance-1の座標だけ単独で取り出しておく（StoryGame.tsxのgetFieldObjective参照）
-export const DESERT_TOWN_ENTRANCE_POS = { x: 87, y: 19 };
+export const DESERT_TOWN_ENTRANCE_POS = { x: 88, y: 20 };
 
 // 「ちからもち」の言霊で解ける、最初の謎解き。まだ言葉を知らない間は
 // FIELD_STRENGTH_PUZZLE_ROCK_IDの岩がただの行き止まりだが、言葉を覚えていると
@@ -1683,7 +1687,6 @@ export const FIELD_OBJECTS: PlacedObject[] = [
   { id: "mountain-4-152", image: "/images/map/okimono/tileset/texture_mountain_4.png", x: 98, y: 11, widthTiles: 1, heightTiles: 1, blocksMovement: true },
   { id: "mountain-1-153", image: "/images/map/okimono/tileset/texture_mountain_1.png", x: 98, y: 10, widthTiles: 1, heightTiles: 1, blocksMovement: true },
   { id: "entrance-b-154", image: "/images/map/okimono/tileset/icon_entrance_b.png", x: 110, y: 4, widthTiles: 1, heightTiles: 1, groundLevel: true },
-  { id: "tent-155", image: "/images/map/okimono/tileset/icon_tent.png", x: 88, y: 20, widthTiles: 2, heightTiles: 2, groundLevel: true },
   { id: "tower-348", image: "/images/map/okimono/tileset/icon_tower_a_body.png", x: 13, y: 87, widthTiles: 2, heightTiles: 4, blocksMovement: true },
   { id: "tower-349", image: "/images/map/okimono/tileset/icon_tower_a_body.png", x: 12, y: 87, widthTiles: 2, heightTiles: 4, blocksMovement: true },
   { id: "tower-350", image: "/images/map/okimono/tileset/icon_tower_a_body.png", x: 11, y: 87, widthTiles: 2, heightTiles: 4, blocksMovement: true },
@@ -2799,8 +2802,12 @@ export const FIELD_BRIDGE_OBJECTS: PlacedObject[] = [
   {
     id: "field-bridge",
     image: "/images/map/okimono/tileset/icon_crate_a.png",
+    // 修正済み：以前はy:10（上端がFIELD_BRIDGE_TILESの北側マスと同じ高さ）だったため、
+    // 見た目（heightTiles:2で上方向に伸びる）がy:9〜10しかカバーできず、実際に渡れる
+    // 2マス目（y:11）が橋の絵の外にはみ出していた。1マス下げてy:10〜11をちょうど
+    // カバーするようにした
     x: 113,
-    y: 10,
+    y: 11,
     widthTiles: 1,
     heightTiles: 2,
     groundLevel: true,

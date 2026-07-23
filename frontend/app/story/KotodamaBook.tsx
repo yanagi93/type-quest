@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/8bit/button";
 import { SaveSlots } from "./SaveSlots";
 import { MANUAL_SAVE_SLOT_IDS, type SaveSlotId, type SlotSummary } from "./useStoryState";
@@ -22,6 +23,7 @@ type KotodamaBookProps = {
 // 修正済み：以前は「記録する」が実際のセーブ処理と無関係な演出（旅の記憶を書くだけ）
 // だったが、独立していた「💾 セーブ」ボタン・オーバーレイをここに統合した
 export function KotodamaBook({ journalEntries, onSave, slotSummaries, onSaveToSlot }: KotodamaBookProps) {
+  const router = useRouter();
   const [showSlots, setShowSlots] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
@@ -88,6 +90,15 @@ export function KotodamaBook({ journalEntries, onSave, slotSummaries, onSaveToSl
           </div>
         </div>
       )}
+
+      {/*
+        村・フィールド画面側の「🏠 ホーム」「🏠 タイトルに戻る」ボタンは常時表示だと
+        邪魔になるため廃止した。ゲームを抜けたいときはここ（メニュー→言霊の書）から
+        ホーム画面へ戻る
+      */}
+      <Button onClick={() => router.push("/home")} className="mt-2 self-start">
+        🏠 ホーム画面に戻る
+      </Button>
     </div>
   );
 }

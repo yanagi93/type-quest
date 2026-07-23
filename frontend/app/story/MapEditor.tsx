@@ -219,7 +219,7 @@ const OBJECT_PALETTE: ObjectDef[] = [
   { id: "castle-red-roof-top", label: "城：赤屋根（上）", image: `${TILESET_DIR}/icon_castle_red_roof_top.png`, widthTiles: 1, heightTiles: 1, groundLevel: true },
   { id: "castle-cathedral-top", label: "城：大聖堂の屋根", image: `${TILESET_DIR}/icon_castle_cathedral_top.png`, widthTiles: 1, heightTiles: 1, groundLevel: true },
   { id: "castle-towers-top", label: "城：塔の屋根", image: `${TILESET_DIR}/icon_castle_towers_top.png`, widthTiles: 1, heightTiles: 1, groundLevel: true },
-  { id: "desert-castle", label: "砂漠の町の城（章1の入口で使用中）", image: `${TILESET_DIR}/castle_desert_town.png`, widthTiles: 1, heightTiles: 2, blocksMovement: true },
+  { id: "desert-castle", label: "砂漠の町の城", image: `${TILESET_DIR}/castle_desert_town.png`, widthTiles: 1, heightTiles: 2, blocksMovement: true },
   { id: "entrance-a", label: "入口A", image: `${TILESET_DIR}/icon_entrance_a.png`, widthTiles: 1, heightTiles: 1, groundLevel: true },
   { id: "entrance-b", label: "入口B", image: `${TILESET_DIR}/icon_entrance_b.png`, widthTiles: 1, heightTiles: 1, groundLevel: true },
   // 用途がはっきりしない画像：ファイル名から鍛冶屋の看板と推測。違う用途なら教えてください

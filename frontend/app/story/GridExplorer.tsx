@@ -210,6 +210,11 @@ export function GridExplorer({
   viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
 }: GridExplorerProps) {
   const characterLiftPx = Math.round(tileSize * CHARACTER_LIFT_RATIO);
+  // 浮き上がりは「人・動物」サイズ（1マス）のNPCだけに掛ける。家（kind:"npc"だが
+  // 実体は6×6タイルの建物）にも同じ条件で掛かってしまい、家だけ不自然に高い位置に
+  // 見えていたため、サイズでも絞り込むようにした
+  const isLiftedNpc = (i: { kind: string; widthTiles?: number }) =>
+    i.kind === "npc" && i.widthTiles === 1;
 
   // 縁タイルの解決はマップ全体ぶん（数千マス）を毎回計算するのは無駄なので、
   // floorTexturesの参照が変わったとき（マップ・シーン切り替え時）だけ計算し直す
@@ -432,7 +437,7 @@ export function GridExplorer({
     const w = interactable.widthTiles * tileSize;
     const h = interactable.heightTiles * tileSize;
     const left = (interactable.x + 0.5) * tileSize - w / 2;
-    const top = (interactable.y + 1) * tileSize - h - (interactable.kind === "npc" ? characterLiftPx : 0);
+    const top = (interactable.y + 1) * tileSize - h - (isLiftedNpc(interactable) ? characterLiftPx : 0);
 
     if (!isFootprintVisible(left, top, w, h)) continue; // 画面外は描画しない（軽量化）
 

@@ -165,6 +165,15 @@
   100% { transform: scale(1.2); opacity: 0; }
 }
 
+/* 章タイトル演出（StoryGame.tsxのchapterBanner）用。バトルのフロア表示ほど
+   勢いをつけず、ふわっと現れてふわっと消えるだけのゆったりした変化にしている */
+@keyframes chapter-banner-fade {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 @keyframes battle-impact {
   0% { transform: scale(0.3); opacity: 0.9; }
   100% { transform: scale(2.4); opacity: 0; }
@@ -182,5 +191,6 @@
 .animate-battle-defeat-fade { animation: battle-defeat-fade 0.5s ease-in forwards; }
 .animate-battle-pop { animation: battle-pop 0.2s ease-out; }
 .animate-battle-floor-announce { animation: battle-floor-announce 1.6s ease-in-out forwards; }
+.animate-chapter-banner-fade { animation: chapter-banner-fade 3.5s ease-in-out forwards; }
 .animate-battle-impact { animation: battle-impact 0.35s ease-out forwards; }
 .animate-battle-screen-flash { animation: battle-screen-flash 0.35s ease-out forwards; }

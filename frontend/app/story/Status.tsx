@@ -1,12 +1,16 @@
 "use client";
 
 import { ITEM_ATTACK_BONUS, ITEM_DEFENSE_BONUS } from "../battle/difficulty";
+import { WEAPON_TIERS, ARMOR_TIERS } from "./chapter2Data";
 
 type StatusProps = {
   playerHp: number;
   maxPlayerHp: number;
+  gold: number;
   attackBooks: number;
   defenseBooks: number;
+  weaponTier: number;
+  armorTier: number;
   wordsLearnedCount: number;
   wordDictionaryCount: number;
   requiredLearnedCount: number;
@@ -17,8 +21,11 @@ type StatusProps = {
 export function Status({
   playerHp,
   maxPlayerHp,
+  gold,
   attackBooks,
   defenseBooks,
+  weaponTier,
+  armorTier,
   wordsLearnedCount,
   wordDictionaryCount,
   requiredLearnedCount,
@@ -26,9 +33,14 @@ export function Status({
 }: StatusProps) {
   const attackBonusPercent = Math.round(attackBooks * ITEM_ATTACK_BONUS * 100);
   const defenseBonusPercent = Math.round(defenseBooks * ITEM_DEFENSE_BONUS * 100);
+  const weaponName = weaponTier > 0 ? WEAPON_TIERS[weaponTier - 1].name : "なし";
+  const armorName = armorTier > 0 ? ARMOR_TIERS[armorTier - 1].name : "なし";
 
   const rows: { label: string; value: string }[] = [
     { label: "HP", value: `${playerHp} / ${maxPlayerHp}` },
+    { label: "💰 お金", value: `${gold}` },
+    { label: "武器", value: weaponName },
+    { label: "防具", value: armorName },
     { label: "攻撃力ボーナス（ボス戦）", value: `+${attackBonusPercent}%` },
     { label: "被ダメージ軽減（ボス戦）", value: `-${defenseBonusPercent}%` },
     { label: "おぼえた言葉", value: `${wordsLearnedCount} / ${wordDictionaryCount}` },

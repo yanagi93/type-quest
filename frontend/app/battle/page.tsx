@@ -19,6 +19,7 @@ import {
   FIRE_DAMAGE_MULTIPLIER,
   ICE_SLOW_WORD_COUNT,
   ICE_SLOW_SPEED_MULTIPLIER,
+  ARMOR_SLOW_SPEED_MULTIPLIER,
   pickWordForFloor,
   isBossFloor,
   BOSS_HP_MULTIPLIER,
@@ -36,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/8bit/button";
 import { CHAPTER1_FIELD_WORDS } from "../story/storyWords";
 import { CHAPTER1_WORD_DICTIONARY } from "../story/chapter1Data";
+import { WEAPON_TIERS, ARMOR_TIERS } from "../story/chapter2Data";
 import { writeStoryBattleResult } from "../story/useStoryState";
 import { StoryDialogue } from "../story/StoryDialogue";
 import type { DialoguePortrait } from "../story/types";
@@ -64,6 +66,13 @@ const STORY_CONFIG = {
   timeLimit: 60,
   enemyAttackDamage: 8,
 };
+
+// 第2章の武器屋・防具屋で使うお金。勝った戦闘の種類だけで決まる固定額にしてある
+// （討伐スコアそのものを換算する方式だと数値のバランス調整が難しいため、まずは
+// シンプルな定額から始める。chapter2Data.tsのWEAPON_TIERS/ARMOR_TIERSの値段と
+// 見比べて、後で調整しやすいようここにまとめてある）
+const FIELD_BATTLE_GOLD = 10;
+const BOSS_BATTLE_GOLD = 60;
 
 // 演出の長さ(ms)
 const ATTACK_LUNGE_MS = 200;
@@ -172,11 +181,6 @@ type GetMessage = {
 type TreasureMessage = {
   type: ItemType;
   text: string;
-  // フロア最後の敵を倒した瞬間は、宝箱ゲットとその敵自身のdropsMagicが同時に
-  // 発生しうる。以前はそれぞれ別のポップアップ（GetMessage）が同時に出て、
-  // 後から描画される宝箱ポップアップに隠れて見えなくなっていたため、
-  // 敵のドロップ分はここにまとめて1つのポップアップで見せる
-  extraLines?: string[];
 };
 
 // useSearchParams()を使うコンポーネントはSuspenseで包む必要がある
@@ -211,6 +215,12 @@ function BattlePageContent() {
   // ボス戦にだけ、開始時点の強化として引き継がれる
   const attackBooks = Number(searchParams.get("attackBooks") || "0");
   const defenseBooks = Number(searchParams.get("defenseBooks") || "0");
+  // ストーリーモードで武器屋・防具屋から買った装備の段階（0＝何も買っていない）。
+  // attackBooks/defenseBooksと違い、フィールド雑魚戦・ボス戦の両方に常時効く
+  // （StoryGame.tsxのhandleBump/handleFieldStep参照。chapter2Data.tsのWEAPON_TIERS/
+  // ARMOR_TIERS参照）
+  const weaponTier = Number(searchParams.get("weaponTier") || "0");
+  const armorTier = Number(searchParams.get("armorTier") || "0");
   // ストーリーモードは、村での探索中に減ったHPをそのまま持ち越す
   // （試練の塔は毎回100/100からの独立した挑戦なので、指定が無ければ100/100になる）
   const initialHp = Number(searchParams.get("hp") || "100");
@@ -227,6 +237,8 @@ function BattlePageContent() {
       learnedWords={learnedWords}
       attackBooks={attackBooks}
       defenseBooks={defenseBooks}
+      weaponTier={weaponTier}
+      armorTier={armorTier}
       initialHp={initialHp}
       initialMaxHp={initialMaxHp}
       isTutorial={isTutorial}
@@ -243,6 +255,8 @@ function BattleGame({
   learnedWords,
   attackBooks,
   defenseBooks,
+  weaponTier,
+  armorTier,
   initialHp,
   initialMaxHp,
   isTutorial,
@@ -255,6 +269,8 @@ function BattleGame({
   learnedWords: string;
   attackBooks: number;
   defenseBooks: number;
+  weaponTier: number;
+  armorTier: number;
   initialHp: number;
   initialMaxHp: number;
   isTutorial: boolean;
@@ -311,11 +327,6 @@ function BattleGame({
   // refの中身を描画中に直接読むとReactのlintルールに引っかかる（refはレンダーの
   // 外で読む前提のため）ので、勝利が決まった瞬間にstateへコピーしておく
   const [battleLearnedWordsSnapshot, setBattleLearnedWordsSnapshot] = useState<string[]>([]);
-  // 勝利演出でまとめて見せるための、この戦闘の最後の一撃で落ちた魔法（あれば）
-  const [battleMagicDropSnapshot, setBattleMagicDropSnapshot] = useState<{
-    name: string;
-    type: MagicType;
-  } | null>(null);
 
   // チュートリアル戦（isTutorial）でだけ使う、コトの説明ポップアップ。
   // Enterが押されるまでゲームを止める（treasureMessage等と同じ扱い。isPaused参照）。
@@ -338,12 +349,16 @@ function BattleGame({
 
   // 宝箱で強化される、攻撃力・被ダメージの倍率。
   // ストーリーモードのボス戦は、町の宝箱で集めたattackBooks/defenseBooksの数だけ
-  // 最初から強化された状態で始まる（試練の塔の宝箱と同じ量ずつ効果がある）
+  // 最初から強化された状態で始まる（試練の塔の宝箱と同じ量ずつ効果がある）。
+  // weaponTier/armorTierは武器屋・防具屋で買った装備（買い替え式、tier1つぶんの
+  // 効果だけが乗る）で、フィールド雑魚戦・ボス戦どちらでも常時効く
+  const weaponBonus = weaponTier > 0 ? WEAPON_TIERS[weaponTier - 1].bonus : 0;
+  const armorBonus = armorTier > 0 ? ARMOR_TIERS[armorTier - 1].bonus : 0;
   const [attackMultiplier, setAttackMultiplier] = useState(
-    1 + attackBooks * ITEM_ATTACK_BONUS
+    1 + attackBooks * ITEM_ATTACK_BONUS + weaponBonus
   );
   const [defenseMultiplier, setDefenseMultiplier] = useState(
-    Math.max(1 - defenseBooks * ITEM_DEFENSE_BONUS, ITEM_DEFENSE_MULTIPLIER_MIN)
+    Math.max(1 - defenseBooks * ITEM_DEFENSE_BONUS - armorBonus, ITEM_DEFENSE_MULTIPLIER_MIN)
   );
   // 宝箱でアイテムを手に入れたときに一瞬表示するメッセージ
   const [treasureMessage, setTreasureMessage] = useState<TreasureMessage | null>(null);
@@ -409,7 +424,11 @@ function BattleGame({
   // （ストーリーモードには階層の概念が無いため）
   const storyTurnCountRef = useRef(0);
 
-  const isSlowed = slowWordsRemaining > 0;
+  // 氷魔法（3単語だけの強い一時効果）と、鉄の鎧（戦闘中ずっと効く控えめな永続効果。
+  // ARMOR_TIERS[armorTier-1].slowsWords参照）のどちらかが有効なら遅くする。
+  // 両方有効なときはより強い氷魔法側の倍率を使う（下のspeed計算参照）
+  const armorSlowsWords = armorTier > 0 && !!ARMOR_TIERS[armorTier - 1].slowsWords;
+  const isSlowed = slowWordsRemaining > 0 || armorSlowsWords;
 
   // phaseに応じて、自分の攻撃用（wordList）か敵の攻撃用（enemyWordList）かを
   // 切り替えて単語を選ぶ。ストーリーモードは、戦闘が進むほど（単語を出すほど）
@@ -566,11 +585,10 @@ function BattleGame({
 
   // 階層が上がるたびに、宝箱から強化アイテムを1つもらう。
   // Enterが押されるまでゲーム全体を止めておく（wordX・残り時間のカウントダウンを一時停止）。
-  // フロア最後の敵を倒した瞬間にその敵が魔法を落とした場合、以前は宝箱ポップアップとは
-  // 別に「魔法ゲット」ポップアップが同時に出て、後から描画される宝箱ポップアップに
-  // 隠れて見えなくなっていた。そのためmagicDropを受け取り、宝箱ポップアップの
-  // extraLinesにまとめて1つのポップアップで見せるようにしている
-  const grantTreasure = (magicDrop?: { name: string; type: MagicType } | null) => {
+  // フロア最後の敵が魔法を落とした場合の演出は、ここには合流させない。
+  // showMagicDrop側の一時ポップアップだけで見せる（getMessageのz-indexを宝箱より
+  // 高くしてあるので、宝箱ポップアップが開いても数秒はその上に重なって見える）
+  const grantTreasure = () => {
     const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
     let text = "";
 
@@ -610,14 +628,7 @@ function BattleGame({
         break;
     }
 
-    const extraLines: string[] = [];
-
-    if (magicDrop) {
-      setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
-      extraLines.push(`${magicDrop.name}が${MAGIC_META[magicDrop.type].label}の魔法を落とした！`);
-    }
-
-    setTreasureMessage({ type, text, extraLines: extraLines.length > 0 ? extraLines : undefined });
+    setTreasureMessage({ type, text });
   };
 
   // ゲーム開始時に1階の敵と最初の単語を用意する（最初は必ず自分の攻撃から）。
@@ -679,14 +690,16 @@ function BattleGame({
     if (isGameOver || isPaused) return;
 
     const floorSpeed = getWordSpeedForFloor(config.wordSpeed, floor);
-    const speed = isSlowed ? floorSpeed * ICE_SLOW_SPEED_MULTIPLIER : floorSpeed;
+    const slowMultiplier =
+      slowWordsRemaining > 0 ? ICE_SLOW_SPEED_MULTIPLIER : ARMOR_SLOW_SPEED_MULTIPLIER;
+    const speed = isSlowed ? floorSpeed * slowMultiplier : floorSpeed;
 
     const timer = setInterval(() => {
       setWordX((prev) => prev - speed);
     }, 16);
 
     return () => clearInterval(timer);
-  }, [config.wordSpeed, floor, isGameOver, isSlowed, isPaused]);
+  }, [config.wordSpeed, floor, isGameOver, isSlowed, isPaused, slowWordsRemaining]);
 
   // 残り時間のカウントダウン
   useEffect(() => {
@@ -794,7 +807,9 @@ function BattleGame({
         scoreGain += e.score;
         defeatedCount += 1;
 
-        if (!drop && e.dropsMagic && Math.random() < MAGIC_DROP_CHANCE) {
+        // 魔法ドロップは試練の塔だけの仕組み。ストーリーには言霊はあっても
+        // 魔法の概念は無いので、ここで最初から対象外にしている
+        if (!isStory && !drop && e.dropsMagic && Math.random() < MAGIC_DROP_CHANCE) {
           drop = { name: e.name, type: e.dropsMagic };
         }
       } else {
@@ -811,9 +826,9 @@ function BattleGame({
     const isFloorClear = tickedSurvivors.length === 0;
     const magicDrop = drop as { name: string; type: MagicType } | null;
 
-    // フロア/戦闘がこの一撃で終わる場合は、勝利演出（宝箱 or ストーリー勝利）側で
-    // まとめて見せるので、ここでは単独の「魔法ゲット」ポップアップを出さない
-    if (magicDrop && !isFloorClear) {
+    // フロア最後の敵を倒した瞬間でも、一時ポップアップ（showMagicDrop）だけで見せる。
+    // 宝箱ポップアップ側にはもう合流させない（magicCountsの加算もshowMagicDrop側で行う）
+    if (magicDrop) {
       showMagicDrop(magicDrop.name, magicDrop.type);
     }
 
@@ -823,15 +838,16 @@ function BattleGame({
 
     if (isFloorClear) {
       if (isStory) {
-        if (magicDrop) {
-          setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
-        }
+        // 戦闘中の「言霊ゲット！」ポップアップは自前のタイマーで数秒後に消える
+        // 作りなので、そのタイマーが残ったまま勝利演出に入ると、消えるまでの間だけ
+        // 勝利カードの後ろに重なって見えてしまう（背後にちらつく文字の正体）。
+        // 勝利演出に入る瞬間に即座に消しておく
+        setWordGetMessage(null);
         setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
-        setBattleMagicDropSnapshot(magicDrop);
         setStoryBattleOver(true);
       } else {
         setPendingNextFloor(floor + 1);
-        grantTreasure(magicDrop);
+        grantTreasure();
       }
     }
 
@@ -909,14 +925,15 @@ function BattleGame({
       setTimeLeft((prev) => prev + TIME_BONUS_PER_KILL);
 
       const isFloorClear = tickedRest.length === 0;
+      // 魔法ドロップは試練の塔だけの仕組み（ストーリーには言霊はあっても魔法の概念は無い）
       const magicDrop =
-        front.dropsMagic && (front.isBoss || Math.random() < MAGIC_DROP_CHANCE)
+        !isStory && front.dropsMagic && (front.isBoss || Math.random() < MAGIC_DROP_CHANCE)
           ? { name: front.name, type: front.dropsMagic }
           : null;
 
-      // フロア/戦闘がこの一撃で終わる場合は、勝利演出（宝箱 or ストーリー勝利）側で
-      // まとめて見せるので、ここでは単独の「魔法ゲット」ポップアップを出さない
-      if (magicDrop && !isFloorClear) {
+      // フロア最後の敵を倒した瞬間でも、一時ポップアップ（showMagicDrop）だけで見せる。
+      // 宝箱ポップアップ側にはもう合流させない（magicCountsの加算もshowMagicDrop側で行う）
+      if (magicDrop) {
         showMagicDrop(magicDrop.name, magicDrop.type);
       }
 
@@ -924,15 +941,14 @@ function BattleGame({
 
       if (isFloorClear) {
         if (isStory) {
-          if (magicDrop) {
-            setMagicCounts((prev) => ({ ...prev, [magicDrop.type]: prev[magicDrop.type] + 1 }));
-          }
+          // 上のフロアクリア分岐と同じ理由で、勝利演出の裏に前の演出が
+          // 透けて見えないよう先に消しておく
+          setWordGetMessage(null);
           setBattleLearnedWordsSnapshot([...battleLearnedWordsRef.current]);
-          setBattleMagicDropSnapshot(magicDrop);
           setStoryBattleOver(true);
         } else {
           setPendingNextFloor(floor + 1);
-          grantTreasure(magicDrop);
+          grantTreasure();
         }
 
         window.setTimeout(() => setDefeatingUid(null), DEFEAT_FADE_MS);
@@ -1077,6 +1093,7 @@ function BattleGame({
             maxHp: maxPlayerHp,
             learnedWords: battleLearnedWordsRef.current,
             chapter,
+            goldEarned: isBossEncounter ? BOSS_BATTLE_GOLD : FIELD_BATTLE_GOLD,
           });
           // /storyのコンポーネントがNext.jsのクライアント側キャッシュで使い回されると
           // マウント時の効果（戦闘結果の反映）が再実行されないことがあるため、
@@ -1315,9 +1332,13 @@ function BattleGame({
           </div>
         )}
 
-        {/* 魔法ゲット演出 */}
+        {/*
+          魔法ゲット演出（試練の塔のみ。ストーリーには魔法の概念が無いので出ない）。
+          フロア最後の敵を倒したときは宝箱ポップアップ（z-20）も同時に開くため、
+          そちらより高いz-[25]にして、消えるまでの数秒は宝箱の上に重なって見えるようにしている
+        */}
         {getMessage && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
+          <div className="absolute inset-0 z-[25] flex items-center justify-center bg-black/60 pointer-events-none">
             <div
               className={cn(
                 "bg-gray-900 border-4 rounded-xl px-10 py-6 text-center animate-battle-pop",
@@ -1373,11 +1394,6 @@ function BattleGame({
                 {ITEM_META[treasureMessage.type].label}
               </p>
               <p className="text-white text-lg mb-3">{treasureMessage.text}</p>
-              {treasureMessage.extraLines?.map((line) => (
-                <p key={line} className="text-cyan-300 text-base mb-1">
-                  {line}
-                </p>
-              ))}
               <p className="text-white/70 text-sm">
                 Enterキーで {pendingNextFloor ?? floor + 1}F へ
               </p>
@@ -1387,13 +1403,10 @@ function BattleGame({
 
         {/*
           ストーリー戦闘の勝利演出（Enterが押されるまで/storyへは戻らない）。
-          以前は戦闘中に言葉を見つけたときの演出（wordGetMessage）や魔法ドロップの演出
-          （getMessage）が数秒で自動的に消えてしまい、倒した直後に勝利演出（同じ位置に
-          重なって表示される）に即座に隠されてしまうことがあった。この戦闘で見つけた
-          言葉・落ちた魔法は勝利が決まった瞬間にそれぞれstateへコピーしてあるので、
-          それをここで一覧表示することで「勝利」と「ゲットしたもの」を同じログに
-          まとめている（refの中身を描画中に直接読むとReactのlintルールに
-          引っかかるため、stateにコピーしたものを描画に使う）
+          魔法ドロップは試練の塔だけの仕組み（ストーリーには言霊はあっても魔法の概念は
+          無い）なので、ここは常に「勝利」と見つけた言葉だけを見せればよい。
+          （戦闘中に言葉を見つけたときの一時ポップアップwordGetMessageは、勝利演出に
+          入る瞬間に別途消しているので、ここに透けて残ることは無い）
         */}
         {storyBattleOver && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-none">
@@ -1414,12 +1427,6 @@ function BattleGame({
                     );
                   })}
                 </div>
-              )}
-              {battleMagicDropSnapshot && (
-                <p className={cn("text-base mb-3", MAGIC_META[battleMagicDropSnapshot.type].wordColor)}>
-                  {MAGIC_META[battleMagicDropSnapshot.type].emoji}{" "}
-                  {battleMagicDropSnapshot.name}が{MAGIC_META[battleMagicDropSnapshot.type].label}の魔法を落とした！
-                </p>
               )}
               <p className="text-white/70 text-sm">Enterキーで戻る</p>
             </div>

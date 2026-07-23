@@ -14,14 +14,53 @@ import {
 
 // ============================================================
 // 第2章「砂漠の町」のエリアマップ（WORLD_DESIGN.md 2.第2章 参照）。
-// 今はマップ（床・当たり判定・見た目の置物）だけを用意する段階で、出口や会話・NPCの
-// 中身、StoryGame.tsxへの配線はまだ無い（あとでフェーズ2としてまとめてつなげる。
-// frontend/app/story/MAP_GUIDE.md 4節参照）。
+// 町（お金・宿屋・武器屋・防具屋が実際に機能する）はStoryGame.tsxまで配線済み。
+// 砂漠（DESERT_DUNES_MAP）・ピラミッド（PYRAMID_MAP）はまだマップ（床・当たり判定・
+// 見た目の置物）だけを用意した段階で、出口や会話・NPCの中身、StoryGame.tsxへの
+// 配線はまだ無い（frontend/app/story/MAP_GUIDE.md 4節参照）。
 // 町 → 砂漠 → ピラミッドの3枚構成のうち、この3枚をここに用意した
 // （オアシス・オークキングの間は今回は省略。必要になったら追加する）。
 // ============================================================
 
 const TILESET_DIR = "/images/map/okimono/tileset";
+
+// ============================================================
+// お金・装備（第2章の新要素。WORLD_DESIGN.md「第2章：砂漠の町」参照）
+// ============================================================
+// 買い替え式の装備。tier（state.weaponTier/armorTier、1始まり）を1つ買うと、
+// 前の段階の効果は引き継がず今の段階の効果だけになる（宝箱のattackBooks/
+// defenseBooksのような「集めるほど積み上がる」ボーナスとは別枠の、常時ONの永続効果）。
+// 「言葉を強化する武器」というこのゲームらしさを出すため、武器は打った言葉の威力
+// （attackMultiplier）を、防具は受けるダメージ（defenseMultiplier）を直接強化する
+export type EquipmentTier = {
+  name: string;
+  cost: number;
+  bonus: number;
+  description: string;
+  // trueの防具を装備中は、戦闘中ずっと敵の言葉がゆっくり流れる（battle/page.tsxの
+  // isSlowed・difficulty.tsのARMOR_SLOW_SPEED_MULTIPLIER参照）。今は鉄の鎧だけの特典
+  slowsWords?: boolean;
+};
+
+export const WEAPON_TIERS: EquipmentTier[] = [
+  { name: "みじかい剣", cost: 30, bonus: 0.15, description: "打った言葉の威力が少し上がる。" },
+  { name: "こだまの剣", cost: 90, bonus: 0.3, description: "打った言葉の威力がぐっと上がる。" },
+  { name: "言霊の剣", cost: 220, bonus: 0.5, description: "言葉そのものに強い力が宿る、伝説の剣。" },
+];
+
+// 「防御力をメインにしてほしい」という要望を受け、防具は武器と同じ値段でも
+// 効果を高めに設定してある（同じ段階でweaponより防御ボーナスが大きい）
+export const ARMOR_TIERS: EquipmentTier[] = [
+  { name: "布の鎧", cost: 30, bonus: 0.2, description: "受けるダメージが少し減る。" },
+  { name: "革の鎧", cost: 90, bonus: 0.4, description: "受けるダメージがしっかり減る。" },
+  {
+    name: "鉄の鎧",
+    cost: 220,
+    bonus: 0.65,
+    description: "重く頑丈な、一人前の冒険者の証。戦闘中ずっと、敵の言葉が少しゆっくり流れるようになる。",
+    slowsWords: true,
+  },
+];
 
 // ------------------------------------------------------------
 // ① 砂漠の町（DESERT_TOWN_MAP）
@@ -38,19 +77,86 @@ function buildDesertTownFloor(): FloorTileType[][] {
   return floor;
 }
 
-// 建物はまだ空き家の置物として置くだけ（宿屋・武器屋・防具屋として実際に機能させるのは
-// ショップ実装の時。3章の家と同じく、後で会話・入店処理を足せるようInteractableに
-// 差し替える想定）
-const DESERT_TOWN_BUILDINGS = scatterObjects(
-  "desert-town-building",
-  "/images/map/okimono/ie.png",
-  { widthTiles: 6, heightTiles: 6, collisionHeightTiles: 3, blocksMovement: true },
-  [
-    [6, 6], // 宿屋になる予定
-    [25, 6], // 武器屋になる予定
-    [6, 18], // 防具屋になる予定
-  ]
-);
+// 宿屋・武器屋・防具屋。chapter1Data.tsの村の家（house-fire等）と同じ作り方で、
+// kind:"npc"のInteractableとして画像・当たり判定・ドアの位置（interactionX/Y）を
+// 持たせている。当たり判定は建物の下3マス分（collisionHeightTiles:3）だけ壁にし、
+// その1マス南（建物の外＝通り側）をドアの位置にしてある（footprintOf参照。
+// 建物の中に壁の隙間を作る村と違い、砂漠の町のマスは全部
+// blockObjectFootprintsで自動生成しているため、ドアは建物の外に置く必要がある）
+export const DESERT_TOWN_SHOPS: Interactable[] = [
+  {
+    id: "desert-town-inn",
+    x: 6,
+    y: 6,
+    kind: "npc",
+    label: "",
+    image: "/images/map/okimono/ie.png",
+    widthTiles: 6,
+    heightTiles: 6,
+    collisionWidthTiles: 6,
+    collisionHeightTiles: 3,
+    interactionX: 6,
+    interactionY: 7,
+    shopType: "inn",
+    dialogue: [
+      "小さな宿屋。女将さんが笑顔で迎えてくれた。",
+      "女将「疲れてるでしょう、うちに泊まっていきなさいな。」",
+    ],
+  },
+  {
+    id: "desert-town-weapon-shop",
+    x: 25,
+    y: 6,
+    kind: "npc",
+    label: "",
+    image: "/images/map/okimono/ie.png",
+    widthTiles: 6,
+    heightTiles: 6,
+    collisionWidthTiles: 6,
+    collisionHeightTiles: 3,
+    interactionX: 25,
+    interactionY: 7,
+    shopType: "weapon",
+    dialogue: [
+      "武器屋。壁一面に、いろいろな剣が並んでいる。",
+      "店主「言霊の力を宿した剣だ。打った言葉の威力がぐんと上がるぞ。」",
+    ],
+  },
+  {
+    id: "desert-town-armor-shop",
+    x: 6,
+    y: 18,
+    kind: "npc",
+    label: "",
+    image: "/images/map/okimono/ie.png",
+    widthTiles: 6,
+    heightTiles: 6,
+    collisionWidthTiles: 6,
+    collisionHeightTiles: 3,
+    interactionX: 6,
+    interactionY: 19,
+    shopType: "armor",
+    dialogue: [
+      "防具屋。頑丈そうな鎧が棚に並んでいる。",
+      "店主「この先の砂漠もピラミッドも、装備を整えないと危ないぞ。」",
+    ],
+  },
+];
+
+// buildDesertTownTiles側でだけ使う、上のDESERT_TOWN_SHOPSの当たり判定用データ。
+// blockObjectFootprintsがPlacedObject[]しか受け取れないため、見た目と同じ座標・
+// サイズでPlacedObject形に詰め直しているだけ（実際の見た目・会話はDESERT_TOWN_SHOPS側）
+const DESERT_TOWN_SHOP_FOOTPRINTS: PlacedObject[] = DESERT_TOWN_SHOPS.map((shop) => ({
+  id: `${shop.id}-footprint`,
+  image: shop.image!,
+  x: shop.x,
+  y: shop.y,
+  widthTiles: shop.widthTiles!,
+  heightTiles: shop.heightTiles!,
+  collisionWidthTiles: shop.collisionWidthTiles,
+  collisionHeightTiles: shop.collisionHeightTiles,
+  blocksMovement: true,
+}));
 
 const DESERT_TOWN_TOWER = scatterObjects(
   "desert-town-tower",
@@ -75,7 +181,6 @@ const DESERT_TOWN_TENTS = scatterObjects(
 );
 
 export const DESERT_TOWN_OBJECTS: PlacedObject[] = [
-  ...DESERT_TOWN_BUILDINGS,
   ...DESERT_TOWN_TOWER,
   ...DESERT_TOWN_ROCKS,
   ...DESERT_TOWN_TENTS,
@@ -83,7 +188,7 @@ export const DESERT_TOWN_OBJECTS: PlacedObject[] = [
 
 function buildDesertTownTiles(): TileType[][] {
   const tiles = makeOpenAreaTiles(DESERT_TOWN_WIDTH, DESERT_TOWN_HEIGHT);
-  blockObjectFootprints(tiles, DESERT_TOWN_OBJECTS);
+  blockObjectFootprints(tiles, [...DESERT_TOWN_OBJECTS, ...DESERT_TOWN_SHOP_FOOTPRINTS]);
   return tiles;
 }
 
@@ -92,12 +197,10 @@ export const DESERT_TOWN_FLOOR_TEXTURES: FloorTileType[][] = buildDesertTownFloo
 export const DESERT_TOWN_MAP: GridMap = buildAreaMap(buildDesertTownTiles(), { x: 16, y: 20 });
 
 // ============================================================
-// 砂漠の町の会話（フェーズ2：マップ同士のつながりを実装）
+// 砂漠の町の会話
 // ============================================================
-// 出口（フィールドへ戻る）と、「もり」を教えてくれる旅人NPCの2つだけ用意した。
-// 宿屋・武器屋・防具屋の中身（ショップ機能）はまだ実装していない
-// （chapter1Data.tsの村と同じく、建物はまだ空き家の置物のまま）
 export const DESERT_TOWN_INTERACTABLES: Interactable[] = [
+  ...DESERT_TOWN_SHOPS,
   {
     id: "desert-town-exit",
     x: 16,

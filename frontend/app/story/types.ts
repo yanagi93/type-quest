@@ -84,6 +84,10 @@ export type Interactable = {
   // grantsItem用。一度に何個渡すか（省略時は1個）。長老の家の裏の宝箱のように
   // 「ポーション2個」のようにまとめて渡したいときに使う
   grantsItemCount?: number;
+  // 第2章「砂漠の町」のお店。ぶつかると挨拶の会話→Shop.tsxのショップ画面を開く
+  // （"inn"だけは特別で、ショップ画面を開かず、その場で全回復して終わる）。
+  // 武器・防具の値段や効果はchapter2Data.tsのWEAPON_TIERS/ARMOR_TIERS参照
+  shopType?: "weapon" | "armor" | "inn";
   dialogue?: string[];
   // kind: "exit" 用。ぶつかると別のマップ（シーン）へ切り替える。
   // desertTown/fairyVillageは、それぞれ2章「砂漠の町」・3章「妖精の里」の

@@ -16,7 +16,6 @@ import {
   type Chapter1State,
 } from "./useStoryState";
 import { useWanderers } from "./useWanderers";
-import { HomeButton } from "@/components/HomeButton";
 import { Button } from "@/components/ui/8bit/button";
 import {
   TOWN_MAP,
@@ -51,7 +50,10 @@ import {
   DESERT_TOWN_OBJECTS,
   DESERT_TOWN_TILE_SIZE,
   DESERT_TOWN_FLOOR_TEXTURES,
+  WEAPON_TIERS,
+  ARMOR_TIERS,
 } from "./chapter2Data";
+import { Shop } from "./Shop";
 import {
   FAIRY_VILLAGE_MAP,
   FAIRY_VILLAGE_INTERACTABLES,
@@ -68,6 +70,10 @@ const FOREST_UNLOCK_WORD = "もり";
 // タイトル画面を一度通過したかどうかをこのタブの間だけ覚えておくためのキー
 // （showTitleの初期化・dismissTitle参照）
 const TITLE_SEEN_SESSION_KEY = "storyTitleSeenThisSession";
+
+// 章タイトル演出（画面全体にふわっと章名を出す）の表示時間(ms)。
+// globals.cssのchapter-banner-fadeアニメーション時間と揃えてある
+const CHAPTER_BANNER_MS = 3500;
 
 // 敵が多すぎるという指摘を受けて0.15から引き下げた。さらに、戦闘から戻った直後に
 // また即エンカウントするとテンポが悪いので、SAFE_STEPS_AFTER_BATTLEぶんは必ず
@@ -349,6 +355,51 @@ function countRequiredWordsLearned(wordsLearned: string[]): number {
   return wordsLearned.filter((kana) => kana !== WORD_EXCLUDED_FROM_COUNT && kana !== NAME_UNLOCK_WORD_KANA).length;
 }
 
+// 右上に出す「今やるべきこと」の表示。専用のstateは持たず、handleBump内の各種
+// ゲート判定（村の出口・ボス挑戦条件・名づけミッション等）と同じ条件を毎レンダー
+// stateから読み直して1文にまとめているだけなので、二重管理にはならない。
+//
+// 修正済み：以前は「あとN個」と正確な残り数を出したり、「まだ話しかけていないなら
+// 出口の少年に話しかけよう」を常時出したりしていたが、「探索の途中で見つけてほしい」
+// という指摘を受け、極力ヒントを間接的にした。
+// - 言葉集めは正確な残り数を言わず「村を探索して言葉を集めよう」のようにぼかす。
+// - 謎の少年への声かけは、実際に村の出口へ向かってコトに止められた（handleBumpの
+//   isTownGate && !hasMetStranger分岐）後に初めて具体的な指示として出す
+//   （triedExitWithoutStranger引数。それまでは「外に出てみよう」と行き先だけ示す）
+function getCurrentMission(state: Chapter1State, triedExitWithoutStranger: boolean): string | null {
+  if (!state.bossDefeated) {
+    if (!state.wordsLearned.includes(TUTORIAL_TARGET_KANA)) {
+      return "花壇で言葉『はな』を見つけよう";
+    }
+
+    if (!state.hasMetStranger && triedExitWithoutStranger) {
+      return "村の出口にいる少年に話しかけよう";
+    }
+
+    const requiredLearnedCount = countRequiredWordsLearned(state.wordsLearned);
+
+    if (requiredLearnedCount < BOSS_UNLOCK_WORD_COUNT) {
+      return "村を探索して、言葉を集めよう";
+    }
+
+    if (!state.hasMetStranger) {
+      return "村の外に出てみよう";
+    }
+
+    return "フィールドに出て、キングスライムをたおそう";
+  }
+
+  if (!state.bridgeBuilt) {
+    return "村に戻って、長老に名前をつけてあげよう";
+  }
+
+  if (state.scene !== "desertTown") {
+    return "海に架かった橋を渡って、砂漠の町を目指そう";
+  }
+
+  return null;
+}
+
 export function StoryGame() {
   const router = useRouter();
   const { state, update, learnWord, openChest, useHpBook, usePotion, addJournalEntry, saveToSlot, loadFromSlot } =
@@ -367,6 +418,22 @@ export function StoryGame() {
     { kind: "player"; portraits?: DialoguePortrait[] } | { kind: "npc"; id: string; portraits?: DialoguePortrait[] } | null
   >(null);
   const [showMenu, setShowMenu] = useState(false);
+  // 第2章の武器屋・防具屋。ぶつかった建物のshopTypeがそのまま入る
+  // （"weapon"|"armor"のときだけ開く。"inn"はショップ画面を使わずその場で全回復する）
+  const [shopOpen, setShopOpen] = useState<"weapon" | "armor" | null>(null);
+  // 右上のミッション表示（getCurrentMission）用のヒント。村の出口で謎の少年に
+  // まだ話しかけていないと止められた（handleBump参照）瞬間にtrueになり、以後
+  // 「話しかけよう」と具体的に案内する。それまでは「外に出てみよう」とだけ示し、
+  // 少年の存在は探索中に自分で見つけてもらう（間接的なヒントにするための状態）
+  const [triedExitWithoutStranger, setTriedExitWithoutStranger] = useState(false);
+  // 章タイトル演出（例：「第1章　始まりの村」）。画面全体にふわっと出て、
+  // CHAPTER_BANNER_MS後に自動で消える一時的な表示なので、専用のstateだけで
+  // 完結させている（表示中に他の操作を止めたりはしない）
+  const [chapterBanner, setChapterBanner] = useState<string | null>(null);
+  const showChapterBanner = (text: string) => {
+    setChapterBanner(text);
+    window.setTimeout(() => setChapterBanner(null), CHAPTER_BANNER_MS);
+  };
   // タイトル画面（はじめから／つづきから）を表示中かどうか。永続化されるstateとは
   // 別の、ローカルな表示フラグ。
   // 修正済みのバグ：以前は常にtrueから始めていたため、/battleからのハード
@@ -391,7 +458,12 @@ export function StoryGame() {
   const [showTitle, setShowTitle] = useState(true);
 
   useLayoutEffect(() => {
+    // localStorage/sessionStorage（外部システム）を読んだ結果としての一度きりの
+    // 反映で、SSRとの食い違いを避けるためにあえて初回レンダー後のuseLayoutEffectで
+    // 行っている（上のコメント参照）。レンダー中に計算し直せる値ではないので、
+    // ここでのsetState呼び出しは意図的なもの
     if (hasPendingStoryBattleResult()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShowTitle(false);
       return;
     }
@@ -455,8 +527,14 @@ export function StoryGame() {
       return;
     }
 
-    // HPは勝ったときはそのまま持ち越す
-    const patch: Partial<Chapter1State> = { playerHp: result.hp, maxPlayerHp: result.maxHp };
+    // HPは勝ったときはそのまま持ち越す。お金は稼いだ分だけ加算する
+    // （goldEarnedは勝ったときだけ入っている。battle/page.tsxのFIELD_BATTLE_GOLD/
+    // BOSS_BATTLE_GOLD参照）
+    const patch: Partial<Chapter1State> = {
+      playerHp: result.hp,
+      maxPlayerHp: result.maxHp,
+      gold: state.gold + (result.goldEarned ?? 0),
+    };
 
     if (result.encounter === "boss" && result.outcome === "win") {
       // 「なまえ」を覚えると、村人（kind:"npc"）に名前をつけられるようになる
@@ -617,6 +695,9 @@ export function StoryGame() {
       // 村の外に出るには、まず出口の前にいる謎の少年（stranger）に話しかけておく
       // 必要がある。話しかけていなければ、コトが「怪しい」と言って足止めする
       if (isTownGate && !state.hasMetStranger) {
+        // ここで初めて、右上のミッション表示を「話しかけよう」という具体的な
+        // 案内に切り替える（getCurrentMission参照。それまでは行き先だけ示していた）
+        setTriedExitWithoutStranger(true);
         setDialogue({
           lines: [
             "コト「待って。」",
@@ -688,9 +769,30 @@ export function StoryGame() {
         `mode=story&chapter=1&encounter=boss&words=${words}` +
         (isFirstBattle ? "&tutorial=1" : "") +
         `&attackBooks=${state.attackBooks}&defenseBooks=${state.defenseBooks}` +
+        `&weaponTier=${state.weaponTier}&armorTier=${state.armorTier}` +
         `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
 
       router.push(`/battle?${params}`);
+      return;
+    }
+
+    // 第2章の宿屋・武器屋・防具屋。どれも会話を挟んでから開店する
+    // （宿屋だけはショップ画面を使わず、そのまま全回復してその場で終わる）
+    if (interactable.shopType) {
+      setDialogue({
+        lines: interactable.dialogue ?? [],
+        portraits: [PLAYER_PORTRAIT, KOTO_RIGHT],
+        onComplete: () => {
+          setDialogue(null);
+
+          if (interactable.shopType === "inn") {
+            update({ playerHp: state.maxPlayerHp });
+            return;
+          }
+
+          setShopOpen(interactable.shopType as "weapon" | "armor");
+        },
+      });
       return;
     }
 
@@ -890,6 +992,7 @@ export function StoryGame() {
       const params =
         `mode=story&chapter=1&encounter=field&words=${words}&zone=${zone}` +
         (isFirstBattle ? "&tutorial=1" : "") +
+        `&weaponTier=${state.weaponTier}&armorTier=${state.armorTier}` +
         `&hp=${state.playerHp}&maxHp=${state.maxPlayerHp}`;
 
       router.push(`/battle?${params}`);
@@ -916,13 +1019,6 @@ export function StoryGame() {
       // 背景画像を用意でき次第、このdivの中に <Image src="..." fill className="object-cover" /> を
       // 追加すればよい（今はbg-slate-900の単色のまま）
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
-        <HomeButton />
-        <Button
-          onClick={() => setShowTitle(true)}
-          className="fixed top-6 right-10 z-50"
-        >
-          🏠 タイトルに戻る
-        </Button>
         <StoryDialogue
           open
           title="プロローグ"
@@ -937,13 +1033,6 @@ export function StoryGame() {
   if (state.scene === "intro") {
     return (
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
-        <HomeButton />
-        <Button
-          onClick={() => setShowTitle(true)}
-          className="fixed top-6 right-10 z-50"
-        >
-          🏠 タイトルに戻る
-        </Button>
         <StoryDialogue
           open
           lines={DREAM_LINES}
@@ -958,13 +1047,6 @@ export function StoryGame() {
   if (state.scene === "elderVisit") {
     return (
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
-        <HomeButton />
-        <Button
-          onClick={() => setShowTitle(true)}
-          className="fixed top-6 right-10 z-50"
-        >
-          🏠 タイトルに戻る
-        </Button>
         <StoryDialogue
           open
           lines={ELDER_VISIT_LINES}
@@ -979,19 +1061,15 @@ export function StoryGame() {
   if (state.scene === "meetKoto") {
     return (
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
-        <HomeButton />
-        <Button
-          onClick={() => setShowTitle(true)}
-          className="fixed top-6 right-10 z-50"
-        >
-          🏠 タイトルに戻る
-        </Button>
         <StoryDialogue
           open
           lines={MEET_KOTO_LINES}
           portraits={[PLAYER_PORTRAIT, KOTO_RIGHT]}
           backgrounds={MEET_KOTO_BACKGROUNDS}
-          onComplete={() => update({ scene: "town", playerPos: TUTORIAL_START_POS })}
+          onComplete={() => {
+            update({ scene: "town", playerPos: TUTORIAL_START_POS });
+            showChapterBanner("第1章　始まりの村");
+          }}
         />
       </div>
     );
@@ -1000,12 +1078,14 @@ export function StoryGame() {
   if (state.scene === "ending") {
     return (
       <div className="relative w-screen h-screen bg-slate-900 flex items-center justify-center">
-        <HomeButton />
         <StoryDialogue
           open
           title="エンディング"
           lines={ENDING_LINES}
-          onComplete={() => update({ scene: "field", playerPos: FIELD_START })}
+          onComplete={() => {
+            update({ scene: "field", playerPos: FIELD_START });
+            showChapterBanner("第2章　砂漠の町");
+          }}
         />
       </div>
     );
@@ -1072,22 +1152,52 @@ export function StoryGame() {
   // 表示用。ねこ・いぬなどのボーナスの言葉は含めず、ボス解放に必要な言葉だけを数える
   const requiredLearnedCount = countRequiredWordsLearned(state.wordsLearned);
 
+  const mission = getCurrentMission(state, triedExitWithoutStranger);
+
+  // 武器屋・防具屋の「買う」ボタンから呼ばれる。tiers配列は1始まりのtierNumberで
+  // 呼ばれるので、そのままstate.weaponTier/armorTierに入れればよい（買い替え式なので
+  // 積み上げず、常に最新のtierNumberで上書きする）
+  const handleBuyEquipment = (kind: "weapon" | "armor", tierNumber: number) => {
+    const tiers = kind === "weapon" ? WEAPON_TIERS : ARMOR_TIERS;
+    const tier = tiers[tierNumber - 1];
+
+    if (!tier || state.gold < tier.cost) return;
+
+    update({
+      gold: state.gold - tier.cost,
+      ...(kind === "weapon" ? { weaponTier: tierNumber } : { armorTier: tierNumber }),
+    });
+  };
+
   return (
     <div className="relative w-screen h-screen bg-slate-900 flex flex-col items-center justify-center gap-4">
-      <HomeButton />
+      {/*
+        章タイトル演出。meetKoto（第1章開始）・ending（第2章開始）のonComplete側で
+        showChapterBannerを呼んだときだけ、chapter-banner-fadeでふわっと現れて
+        CHAPTER_BANNER_MS後に自動で消える。操作は止めない（pointer-events-none）
+      */}
+      {chapterBanner && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 pointer-events-none animate-chapter-banner-fade">
+          <p
+            className="text-white text-4xl md:text-5xl font-black text-center px-6 whitespace-pre-line"
+            style={{ WebkitTextStroke: "2px black" }}
+          >
+            {chapterBanner}
+          </p>
+        </div>
+      )}
 
       {/*
-        途中でタイトルに戻りたいときのためのボタン。押すとタイトル画面（はじめから／
-        つづきから）が表示される。stateはそのままなので、つづきからを選べば
-        今と同じ場所に戻ってこられる（showTitleはセッション内だけのローカルな表示
-        フラグで、セーブ内容自体には影響しない）
+        右上のミッション表示。getCurrentMissionが状況から自動で決めた「今やるべきこと」を
+        常時出しておく、簡易クエストトラッカー。やることが無くなったら（＝現状は
+        砂漠の町に着いた後）何も出さない
       */}
-      <Button
-        onClick={() => setShowTitle(true)}
-        className="fixed top-6 right-10 z-50"
-      >
-        🏠 タイトルに戻る
-      </Button>
+      {mission && (
+        <div className="fixed top-6 right-10 z-40 max-w-[240px] rounded-md border-2 border-yellow-400 bg-gray-900/90 px-4 py-2">
+          <p className="mb-1 text-xs font-bold text-yellow-300">🎯 今やるべきこと</p>
+          <p className="text-xs leading-snug text-white">{mission}</p>
+        </div>
+      )}
 
       {/* 言霊の書・言葉の図鑑・持ち物・ステータスをまとめて開くボタン */}
       <Button
@@ -1118,6 +1228,9 @@ export function StoryGame() {
         onUsePotion={usePotion}
         playerHp={state.playerHp}
         maxPlayerHp={state.maxPlayerHp}
+        gold={state.gold}
+        weaponTier={state.weaponTier}
+        armorTier={state.armorTier}
         requiredLearnedCount={requiredLearnedCount}
         bossUnlockWordCount={BOSS_UNLOCK_WORD_COUNT}
         slotSummaries={getAllSlotSummaries()}
@@ -1130,7 +1243,7 @@ export function StoryGame() {
       />
 
       <p className="text-white text-sm">
-        {sceneLabel} ｜ HP：{state.playerHp}/{state.maxPlayerHp}
+        {sceneLabel} ｜ HP：{state.playerHp}/{state.maxPlayerHp} ｜ 💰 {state.gold}
       </p>
 
       {/*
@@ -1146,7 +1259,7 @@ export function StoryGame() {
         onMove={(pos) => update({ playerPos: pos })}
         onBump={handleBump}
         onStepOntoFloor={isSafeArea ? undefined : handleFieldStep}
-        isLocked={dialogue !== null || showMenu || namingPrompt !== null}
+        isLocked={dialogue !== null || showMenu || namingPrompt !== null || shopOpen !== null}
         tileSize={tileSize}
         floorTextures={floorTextures}
         viewportWidth={isTown ? TOWN_VIEWPORT_WIDTH : undefined}
@@ -1177,6 +1290,16 @@ export function StoryGame() {
             : "この子に名前をつける？\nつけない場合は、ランダムな名前になるよ。"
         }
         onSubmit={handleNamingSubmit}
+      />
+
+      <Shop
+        open={shopOpen !== null}
+        title={shopOpen === "weapon" ? "武器屋" : "防具屋"}
+        gold={state.gold}
+        currentTier={shopOpen === "weapon" ? state.weaponTier : state.armorTier}
+        tiers={shopOpen === "weapon" ? WEAPON_TIERS : ARMOR_TIERS}
+        onBuy={(tierNumber) => shopOpen && handleBuyEquipment(shopOpen, tierNumber)}
+        onClose={() => setShopOpen(null)}
       />
     </div>
   );

@@ -69,6 +69,15 @@ export type Chapter1State = {
   // 架かったかどうか。trueになるとFIELD_MAPの(113,10)/(113,11)が歩けるようになる
   // （StoryGame.tsxのbuildFieldMap呼び出し、chapter1Data.tsのFIELD_BRIDGE_TILES参照）
   bridgeBuilt: boolean;
+  // 第2章「砂漠の町」で導入するお金。戦闘に勝つと貯まり（battle/page.tsxのgoldEarned
+  // 参照）、鍛冶屋・防具屋で装備を買うのに使う（StoryGame.tsxのhandleBuyEquipment参照）
+  gold: number;
+  // 鍛冶屋・防具屋で買った装備の段階（0＝何も買っていない、1〜3＝chapter2Data.tsの
+  // WEAPON_TIERS/ARMOR_TIERSの何番目まで買ったか）。上の段階を買うと下の段階の効果は
+  // 引き継がず今の段階の効果だけになる（買い替え式。attackBooks/defenseBooksのような
+  // 宝箱の一時ボーナスとは別枠で、常時ONの永続ボーナスとして戦闘側に渡す）
+  weaponTier: number;
+  armorTier: number;
 };
 
 const STORAGE_KEY = "storyProgress";
@@ -93,6 +102,9 @@ const DEFAULT_STATE: Chapter1State = {
   playerName: "",
   npcNames: {},
   bridgeBuilt: false,
+  gold: 0,
+  weaponTier: 0,
+  armorTier: 0,
 };
 
 // ============================================================
@@ -428,6 +440,9 @@ export type StoryBattleResult = {
   // どの章のボスと戦ったか（battle/page.tsxのURLの&chapter=をそのまま渡す）。
   // ボスに勝った場合、StoryGame.tsx側でcurrentChapterをこの値+1に進める
   chapter?: number;
+  // 勝った場合だけ入る、この戦闘で稼いだお金（battle/page.tsxのFIELD_BATTLE_GOLD/
+  // BOSS_BATTLE_GOLD参照）。負けたときは無い（undefined）
+  goldEarned?: number;
 };
 
 const BATTLE_RESULT_KEY = "storyBattleResult";
